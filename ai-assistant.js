@@ -41,6 +41,8 @@
   const MAX_EXTRA_COLUMNS = 4;
   const CORE_COLUMNS = new Set(["nom", "prenom", "classe", "sexe", "distance", "vitesse", "vma", "temps_total"]);
   const INCOMPLETE_RESPONSE_ERROR = "AI_INCOMPLETE_RESPONSE";
+  const DEBUG_AI = true;
+  const DEBUG_PREFIX = "[ScanProf IA]";
   const SECTION_ICONS = {
     Synthèse: "📘",
     "Élèves en difficulté": "⚠️",
@@ -433,7 +435,7 @@
   }
 
   async function handleAnalysis(intent = "bilan", questionText = "") {
-    console.log("[ScanProf IA] handleAnalysis invoked from scanprofV2/ai-assistant.js (intent:", intent, ")");
+    logDebug("handleAnalysis start", { intent });
     lastIntent = intent;
     const statusTarget = intent === "question" ? refs.questionStatus : refs.runStatus;
     const apiKey = getApiKey();
@@ -446,6 +448,7 @@
       setStatus(statusTarget, "Aucun élève enregistré pour cette séance.", "error");
       return;
     }
+    logDebug("Dataset loaded", { size: dataset.length });
     const { key: providerKey, label: providerLabel } = getProviderConfig();
 
     setPanelBusy(true);
@@ -459,6 +462,11 @@
       const summary = summarizeDataset();
       const manualInterpretation = refs.interpretationField?.value || localStorage.getItem(STORAGE.INTERPRETATION) || "";
       const sliced = dataset.slice(0, MAX_ELEVES).map(cleanEntry);
+      logDebug("Dataset trimmed", {
+        originalCount: dataset.length,
+        sentCount: sliced.length,
+        columns: summary.columns,
+      });
       currentContext = {
         ...(summary.meta || {}),
         className:
@@ -508,6 +516,8 @@
         throw new Error("Module de prompt introuvable.");
       }
       const { messages, schema } = builder.buildPrompt({ analysisInput, mode: intent });
+      logDebug("Prompt schema keys", schema.map((section) => section.key));
+      logPromptDiagnostics(messages, sliced, summary.columns || []);
       const model = getSelectedModel();
       const processed = await generateAIResponseWithRetry({
         providerKey,
@@ -581,14 +591,20 @@
     let currentMessages = messages;
     while (attempt < 2) {
       try {
+        logDebug("AI call attempt", { attempt: attempt + 1, provider: providerKey, model });
         const responseText = await callProvider(providerKey, apiKey, model, currentMessages, options);
-        return processAIResponse(schema, responseText);
+        logDebug("AI raw response", { attempt: attempt + 1, length: responseText?.length || 0, preview: (responseText || "").slice(0, 500) });
+        const processed = processAIResponse(schema, responseText);
+        logDebug("AI processed response", { attempt: attempt + 1, type: processed.type });
+        return processed;
       } catch (err) {
         if (isIncompleteResponseError(err) && attempt === 0) {
+          logDebug("Incomplete response detected, retrying with shorter prompt", { details: err.details });
           attempt += 1;
           currentMessages = shortenMessagesForRetry(messages);
           continue;
         }
+        logDebug("AI call failed", { attempt: attempt + 1, error: err });
         throw err;
       }
     }
@@ -610,25 +626,31 @@
   function processAIResponse(schema, rawText) {
     const cleaned = stripCodeFences(rawText);
     if (!cleaned) {
-      throw createIncompleteResponseError("Réponse IA vide, merci de relancer l’analyse.");
+      logDebug("processAIResponse: empty response detected");
+      throw createIncompleteResponseError("Réponse IA vide, merci de relancer l’analyse.", "empty_string");
     }
     const parsed = tryParseJson(cleaned);
     if (parsed && typeof parsed === "object") {
+      logDebug("processAIResponse: parsed structured JSON", { keys: Object.keys(parsed) });
       return { type: "structured", data: parsed, raw: cleaned };
     }
     if (looksLikeJson(cleaned)) {
-      throw createIncompleteResponseError("Réponse IA incomplète, merci de relancer l’analyse.");
+      logDebug("processAIResponse: looks like JSON but parse failed");
+      throw createIncompleteResponseError("Réponse IA incomplète, merci de relancer l’analyse.", "json_like_parse_failed");
     }
     if (!cleaned.trim()) {
-      throw createIncompleteResponseError("Réponse IA vide, merci de relancer l’analyse.");
+      logDebug("processAIResponse: whitespace-only response");
+      throw createIncompleteResponseError("Réponse IA vide, merci de relancer l’analyse.", "whitespace_only");
     }
     return { type: "text", text: cleaned.trim(), raw: cleaned };
   }
 
-  function createIncompleteResponseError(message) {
+  function createIncompleteResponseError(message, details) {
     const err = new Error(message || "Réponse IA incomplète, merci de relancer l’analyse.");
     err.code = INCOMPLETE_RESPONSE_ERROR;
     err.userMessage = err.message;
+    if (details) err.details = details;
+    logDebug("createIncompleteResponseError", { message: err.message, details });
     return err;
   }
 
@@ -670,8 +692,10 @@
       return;
     }
     if (processed.type === "structured") {
+      logDebug("Rendering structured report");
       renderStructuredReport(schema, processed.data);
     } else {
+      logDebug("Rendering text fallback");
       renderPlainTextFallback(processed.text || "");
     }
   }
@@ -680,6 +704,7 @@
     const container = refs.modalContent;
     if (!container) return;
     const list = Array.isArray(schema) && schema.length ? schema : window.ScanProfAIPrompt.SECTION_SCHEMA || [];
+    debugSchemaConsistency(schema);
     const entries = list.map((section) => {
       const value = data ? data[section.key] : null;
       return {
@@ -695,6 +720,7 @@
 
   function renderPlainTextFallback(text) {
     if (!refs.modalContent) return;
+    logDebug("Rendering plain text fallback");
     const content = (text && text.trim()) || "Aucun résultat exploitable.";
     const sections = addQuestionSection([{ label: "Bilan textuel", value: content, content }]);
     refs.modalContent.innerHTML = sections.map((entry) => renderSection(entry.label, entry.value)).join("");
@@ -742,6 +768,7 @@
 
   function renderFallbackError(message) {
     if (!refs.modalContent) return;
+    logDebug("Rendering fallback error", { message });
     const text = message || "Analyse indisponible.";
     const sections = addQuestionSection([{ label: "Erreur", value: text, content: text }]);
     refs.modalContent.innerHTML = sections.map((entry) => renderSection(entry.label, entry.value)).join("");
@@ -755,6 +782,7 @@
       lastQuestionText &&
       !list.some((entry) => entry && entry.label === "Question posée")
     ) {
+      logDebug("Injecting question section");
       list.unshift({ label: "Question posée", value: lastQuestionText, content: lastQuestionText });
     }
     return list;
@@ -770,6 +798,10 @@
       content: section.content || "",
     }));
     lastReportText = buildPlainTextFromSections(lastReportSections);
+    logDebug("Report state updated", {
+      sections: lastReportSections.map((section) => section.label),
+      resultType: sections.length ? "structured" : "empty",
+    });
   }
 
   function revealModalContent() {
@@ -795,12 +827,14 @@
       lines.push(`<div class="ai-context__line">🕒 ${escapeHtml(date.toLocaleString())}</div>`);
     }
     if (!lines.length) {
+      logDebug("Modal context hidden (no lines)");
       refs.modalContext.classList.add("sp-hidden");
       refs.modalContext.innerHTML = "";
       return;
     }
     refs.modalContext.innerHTML = lines.join("");
     refs.modalContext.classList.remove("sp-hidden");
+    logDebug("Modal context", { lines: lines.map((line) => line.replace(/<[^>]+>/g, "")) });
   }
 
   function buildPlainTextFromSections(sections = []) {
@@ -1273,5 +1307,42 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  function logDebug(message, payload) {
+    if (!DEBUG_AI) return;
+    if (payload !== undefined) console.log(DEBUG_PREFIX, message, payload);
+    else console.log(DEBUG_PREFIX, message);
+  }
+
+  function logPromptDiagnostics(messages = [], students = [], columns = []) {
+    if (!DEBUG_AI) return;
+    const promptPreview = messages
+      .map((msg) => `[${msg.role}] ${msg.content || ""}`)
+      .join("\n\n");
+    let byteLength = promptPreview.length;
+    try {
+      byteLength = new TextEncoder().encode(promptPreview).length;
+    } catch {
+      /* encoder not available */
+    }
+    const sampleStudent = students[0] ? Object.keys(students[0]) : [];
+    logDebug("Prompt diagnostics", {
+      totalMessages: messages.length,
+      approxBytes: byteLength,
+      sampleMessage: messages[1]?.content?.slice(0, 2000) || "",
+      studentsSent: students.length,
+      sampleStudentKeys: sampleStudent,
+      columnsSent: columns,
+    });
+  }
+
+  function debugSchemaConsistency(schema = []) {
+    if (!DEBUG_AI) return;
+    const schemaKeys = schema.map((section) => section.key);
+    logDebug("Schema consistency check", {
+      promptSchemaKeys: schemaKeys,
+      rendererSchemaFallback: (window.ScanProfAIPrompt && window.ScanProfAIPrompt.SECTION_SCHEMA || []).map((s) => s.key),
+    });
   }
 })();
