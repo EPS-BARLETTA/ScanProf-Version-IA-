@@ -76,6 +76,9 @@
     .ai-modal__card{width:min(960px,95vw);max-height:92vh;overflow:hidden;border-radius:18px;background:var(--sp-surface,#fff);box-shadow:0 25px 60px rgba(0,0,0,.45);display:flex;flex-direction:column;}
     .ai-modal__header{padding:14px 16px;border-bottom:1px solid var(--sp-border);display:flex;align-items:center;justify-content:space-between;gap:10px;}
     .ai-modal__body{padding:16px;overflow:auto;background:var(--sp-table-even,#f8f8f8);}
+    .ai-modal__context{margin-bottom:12px;border:1px solid var(--sp-border);border-radius:10px;padding:10px;background:var(--sp-surface);box-shadow:var(--sp-card-shadow);}
+    .ai-context__line{display:flex;align-items:center;gap:6px;font-size:0.9rem;margin-bottom:4px;color:var(--sp-text);}
+    .ai-context__line:last-child{margin-bottom:0;}
     .ai-modal__footer{padding:14px 16px;border-top:1px solid var(--sp-border);display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;}
     .ai-modal__section{margin-bottom:16px;padding:12px;border-radius:12px;background:var(--sp-surface);box-shadow:var(--sp-card-shadow);}
     .ai-modal__section-header{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
@@ -249,6 +252,7 @@
         <button type="button" class="ai-modal__close" id="ai-modal-close">✖</button>
       </div>
       <div class="ai-modal__body" id="ai-modal-body">
+        <div class="ai-modal__context sp-hidden" id="ai-modal-context"></div>
         <div class="ai-modal__loading" id="ai-modal-loading" aria-live="polite">
           <span>Analyse en cours...</span>
         </div>

@@ -40,7 +40,7 @@
   const MAX_ELEVES = 150;
   const CORE_COLUMNS = new Set(["nom", "prenom", "classe", "sexe", "distance", "vitesse", "vma", "temps_total"]);
   const SECTION_ICONS = {
-    "Synthèse de la séance": "📘",
+    Synthèse: "📘",
     "Élèves en difficulté": "⚠️",
     "Élèves à surveiller": "👀",
     "Points forts": "🌟",
@@ -49,6 +49,9 @@
     Différenciation: "🎯",
     "Réponse à la question": "💬",
     "Pistes concrètes": "🛠️",
+    "Bilan textuel": "📄",
+    "Question posée": "❓",
+    Erreur: "⚠️",
   };
 
   let refs = {};
@@ -249,6 +252,7 @@
       modalTitle: document.getElementById("ai-modal-title"),
       modalSubtitle: document.getElementById("ai-modal-subtitle"),
       modalBody: document.getElementById("ai-modal-body"),
+      modalContext: document.getElementById("ai-modal-context"),
       modalLoading: document.getElementById("ai-modal-loading"),
       modalContent: document.getElementById("ai-modal-content"),
       copyBtn: document.getElementById("ai-copy-report-btn"),
@@ -455,6 +459,10 @@
         providerLabel,
         intent,
         storedContext,
+        totalEntries: dataset.length,
+        usedEntries: sliced.length,
+        studentCount: dataset.length,
+        sessionDate: storedContext?.date || null,
         updatedAt:
           (summary.meta && (summary.meta.updatedAt || summary.meta.savedAt)) || new Date().toISOString(),
       };
@@ -495,8 +503,8 @@
         max_tokens: 1200,
         intent,
       });
-      const parsed = parseReport(responseText);
-      renderReport(schema, parsed, responseText);
+      const processed = processAIResponse(schema, responseText);
+      renderReport(schema, processed);
       setStatus(statusTarget, "Analyse terminée 🎉", "success");
       setModalLoading(false);
       setPanelBusy(false);
@@ -551,62 +559,87 @@
     return info;
   }
 
-  function renderReport(schema, report, fallbackText) {
-    const sections = Array.isArray(schema) ? schema : window.ScanProfAIPrompt.SECTION_SCHEMA || [];
-    const container = refs.modalContent;
-    if (!container) return;
-    if (!report) {
-      renderPlainTextFallback(fallbackText);
+  function processAIResponse(schema, rawText) {
+    const cleaned = stripCodeFences(rawText);
+    if (!cleaned) {
+      throw new Error("Réponse IA vide, merci de relancer l’analyse.");
+    }
+    const parsed = tryParseJson(cleaned);
+    if (parsed && typeof parsed === "object") {
+      return { type: "structured", data: parsed, raw: cleaned };
+    }
+    if (looksLikeJson(cleaned)) {
+      throw new Error("Réponse IA incomplète, merci de relancer l’analyse.");
+    }
+    if (!cleaned.trim()) {
+      throw new Error("Réponse IA vide, merci de relancer l’analyse.");
+    }
+    return { type: "text", text: cleaned.trim(), raw: cleaned };
+  }
+
+  function stripCodeFences(text = "") {
+    let trimmed = String(text == null ? "" : text).trim();
+    const fenceMatch = trimmed.match(/^```(?:json)?([\s\S]*?)```$/i);
+    if (fenceMatch) return fenceMatch[1].trim();
+    if (trimmed.startsWith("```")) {
+      trimmed = trimmed.replace(/^```(?:json)?/i, "").trim();
+    }
+    if (trimmed.endsWith("```")) {
+      trimmed = trimmed.replace(/```$/, "").trim();
+    }
+    return trimmed;
+  }
+
+  function tryParseJson(text) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+
+  function looksLikeJson(text = "") {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return false;
+    if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) return true;
+    return /"[a-z0-9_\- ]+"\s*:/.test(trimmed);
+  }
+
+  function renderReport(schema, processed) {
+    if (!processed) {
+      renderPlainTextFallback("Réponse IA indisponible.");
       return;
     }
-    let html = sections
-      .map((section) => renderSection(section.label, report && report[section.key]))
-      .join("");
-    if (lastIntent === "question" && lastQuestionText) {
-      html =
-        `<article class="ai-modal__section"><h3>Question posée</h3><p>${escapeHtml(lastQuestionText)}</p></article>` +
-        html;
+    if (processed.type === "structured") {
+      renderStructuredReport(schema, processed.data);
+    } else {
+      renderPlainTextFallback(processed.text || "");
     }
-    container.innerHTML = html;
-    container.classList.remove("sp-hidden");
-    refs.modalLoading?.classList.add("sp-hidden");
-    refs.modalTitle.textContent = intentTitle(lastIntent);
-    refs.modalSubtitle.textContent = buildModalSubtitle();
-    lastReportSections = sections.map((section) => ({
-      label: section.label,
-      content: valueToPlainText(report && report[section.key]),
-    }));
-    lastReportText = sections
-      .map(
-        (section) =>
-          `${section.label}\n${"-".repeat(section.label.length)}\n${valueToPlainText(report && report[section.key]) || "Aucune information disponible."}`
-      )
-      .join("\n\n");
-    lastReportText = lastReportText || fallbackText || "Aucun résultat exploitable.";
-    if (lastIntent === "question" && lastQuestionText) {
-      lastReportText = `Question posée\n----------------\n${lastQuestionText}\n\n${lastReportText}`;
-    }
+  }
+
+  function renderStructuredReport(schema, data) {
+    const container = refs.modalContent;
+    if (!container) return;
+    const list = Array.isArray(schema) && schema.length ? schema : window.ScanProfAIPrompt.SECTION_SCHEMA || [];
+    const entries = list.map((section) => {
+      const value = data ? data[section.key] : null;
+      return {
+        label: section.label,
+        value,
+        content: valueToPlainText(value) || "Aucune information disponible.",
+      };
+    });
+    const displayEntries = addQuestionSection(entries);
+    container.innerHTML = displayEntries.map((entry) => renderSection(entry.label, entry.value)).join("");
+    updateReportState(displayEntries.map(({ label, content }) => ({ label, content })));
   }
 
   function renderPlainTextFallback(text) {
     if (!refs.modalContent) return;
-    const safeText = escapeHtml(text || "Réponse vide.");
-    let html = `<article class="ai-modal__section"><h3>Bilan textuel</h3><p>${safeText.replace(/\n/g, "<br>")}</p></article>`;
-    if (lastIntent === "question" && lastQuestionText) {
-      html =
-        `<article class="ai-modal__section"><h3>Question posée</h3><p>${escapeHtml(lastQuestionText)}</p></article>` +
-        html;
-    }
-    refs.modalContent.innerHTML = html;
-    refs.modalContent.classList.remove("sp-hidden");
-    refs.modalLoading?.classList.add("sp-hidden");
-    refs.modalTitle.textContent = intentTitle(lastIntent);
-    refs.modalSubtitle.textContent = buildModalSubtitle();
-    lastReportText = text || "";
-    if (lastIntent === "question" && lastQuestionText) {
-      lastReportText = `Question posée\n----------------\n${lastQuestionText}\n\n${lastReportText}`;
-    }
-    lastReportSections = [{ label: "Bilan textuel", content: text || "" }];
+    const content = (text && text.trim()) || "Aucun résultat exploitable.";
+    const sections = addQuestionSection([{ label: "Bilan textuel", value: content, content }]);
+    refs.modalContent.innerHTML = sections.map((entry) => renderSection(entry.label, entry.value)).join("");
+    updateReportState(sections.map(({ label, content: value }) => ({ label, content: value })));
   }
 
   function renderSection(label, value) {
@@ -633,7 +666,8 @@
         .join("");
       return `<ul>${entries}</ul>`;
     }
-    return `<p>${escapeHtml(String(value))}</p>`;
+    const str = String(value);
+    return `<p>${escapeHtml(str).replace(/\n{2,}/g, "<br><br>").replace(/\n/g, "<br>")}</p>`;
   }
 
   function valueToPlainText(value) {
@@ -647,35 +681,79 @@
     return String(value);
   }
 
-  function parseReport(responseText) {
-    if (!responseText) return null;
-    try {
-      return JSON.parse(responseText);
-    } catch {
-      return null;
-    }
-  }
-
   function renderFallbackError(message) {
     if (!refs.modalContent) return;
-    let html = `<article class="ai-modal__section"><h3>Erreur</h3><p>${escapeHtml(
-      message || "Analyse indisponible."
-    )}</p></article>`;
-    if (lastIntent === "question" && lastQuestionText) {
-      html =
-        `<article class="ai-modal__section"><h3>Question posée</h3><p>${escapeHtml(lastQuestionText)}</p></article>` +
-        html;
+    const text = message || "Analyse indisponible.";
+    const sections = addQuestionSection([{ label: "Erreur", value: text, content: text }]);
+    refs.modalContent.innerHTML = sections.map((entry) => renderSection(entry.label, entry.value)).join("");
+    updateReportState(sections.map(({ label, content }) => ({ label, content })));
+  }
+
+  function addQuestionSection(sections = []) {
+    const list = Array.isArray(sections) ? sections.map((section) => ({ ...section })) : [];
+    if (
+      lastIntent === "question" &&
+      lastQuestionText &&
+      !list.some((entry) => entry && entry.label === "Question posée")
+    ) {
+      list.unshift({ label: "Question posée", value: lastQuestionText, content: lastQuestionText });
     }
-    refs.modalContent.innerHTML = html;
-    refs.modalContent.classList.remove("sp-hidden");
-    refs.modalLoading?.classList.add("sp-hidden");
-    lastReportText = message || "";
-    if (lastIntent === "question" && lastQuestionText) {
-      lastReportText = `Question posée\n----------------\n${lastQuestionText}\n\n${lastReportText}`;
-    }
-    lastReportSections = [{ label: "Erreur", content: message || "" }];
+    return list;
+  }
+
+  function updateReportState(sections = []) {
+    revealModalContent();
+    renderModalContext();
     refs.modalTitle.textContent = intentTitle(lastIntent);
     refs.modalSubtitle.textContent = buildModalSubtitle();
+    lastReportSections = sections.map((section) => ({
+      label: section.label,
+      content: section.content || "",
+    }));
+    lastReportText = buildPlainTextFromSections(lastReportSections);
+  }
+
+  function revealModalContent() {
+    refs.modalContent?.classList.remove("sp-hidden");
+    refs.modalLoading?.classList.add("sp-hidden");
+  }
+
+  function renderModalContext() {
+    if (!refs.modalContext) return;
+    const meta = currentContext || {};
+    const lines = [];
+    const headerParts = [meta.className, meta.activityName, meta.sessionName].filter(Boolean);
+    if (headerParts.length) {
+      lines.push(`<div class="ai-context__line">🏫 ${escapeHtml(headerParts.join(" • "))}</div>`);
+    }
+    const count = meta.usedEntries || meta.totalEntries || meta.studentCount;
+    if (count) {
+      lines.push(`<div class="ai-context__line">👥 ${count} élève(s) analysé(s)</div>`);
+    }
+    const dateSource = meta.updatedAt || meta.sessionDate || meta.date || meta.date_iso;
+    if (dateSource) {
+      const date = new Date(dateSource);
+      lines.push(`<div class="ai-context__line">🕒 ${escapeHtml(date.toLocaleString())}</div>`);
+    }
+    if (!lines.length) {
+      refs.modalContext.classList.add("sp-hidden");
+      refs.modalContext.innerHTML = "";
+      return;
+    }
+    refs.modalContext.innerHTML = lines.join("");
+    refs.modalContext.classList.remove("sp-hidden");
+  }
+
+  function buildPlainTextFromSections(sections = []) {
+    if (!sections.length) return "";
+    return sections
+      .map((section) => {
+        const label = section.label || "";
+        const content = section.content && section.content.trim ? section.content.trim() : section.content || "";
+        const body = content || "Aucune information disponible.";
+        return `${label}\n${"-".repeat(label.length || 3)}\n${body}`;
+      })
+      .join("\n\n");
   }
 
   async function copyReport() {
@@ -715,6 +793,10 @@
     refs.modal?.classList.remove("sp-hidden");
     refs.modalContent?.classList.add("sp-hidden");
     refs.modalLoading?.classList.remove("sp-hidden");
+    if (refs.modalContext) {
+      refs.modalContext.classList.add("sp-hidden");
+      refs.modalContext.innerHTML = "";
+    }
   }
 
   function closeModal() {

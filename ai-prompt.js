@@ -1,6 +1,6 @@
 (function () {
   const SECTION_SCHEMA = [
-    { key: "synthese", label: "Synthèse de la séance" },
+    { key: "synthese", label: "Synthèse" },
     { key: "eleves_difficulte", label: "Élèves en difficulté" },
     { key: "eleves_a_surveiller", label: "Élèves à surveiller" },
     { key: "points_forts", label: "Points forts" },
@@ -35,6 +35,9 @@
       "Les colonnes détectées sont fournies dans le contexte. Si aucune signification n'est précisée, reste descriptif et indique que l'abréviation n'a pas été expliquée.",
       "Des aides d'interprétation peuvent être présentes dans le champ `interpretation`. Utilise-les après les informations explicites de la séance, puis complète avec le dictionnaire associé à l'activité, puis avec les indications saisies par l'enseignant.",
       "Pour toute colonne ou abréviation non définie, mentionne simplement qu'elle n'est pas expliquée au lieu d'en inventer le sens.",
+      "Chaque section doit tenir en 1 à 3 phrases ou 3 puces maximum.",
+      "Ne cite pas de noms de colonnes ou de codes techniques sauf s'ils sont explicitement définis dans les interprétations.",
+      "N'utilise jamais de blocs de code dans ta réponse finale.",
       "Le ton doit rester professionnel, positif et directement exploitable.",
       "Structure obligatoirement ta réponse en JSON strict avec les clés suivantes :",
       JSON.stringify(schema.map((section) => section.key), null, 2),
