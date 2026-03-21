@@ -447,6 +447,7 @@
       const storedContext = getStoredAIContext();
       const summary = summarizeDataset();
       const manualInterpretation = refs.interpretationField?.value || localStorage.getItem(STORAGE.INTERPRETATION) || "";
+      const sliced = dataset.slice(0, MAX_ELEVES).map(cleanEntry);
       currentContext = {
         ...(summary.meta || {}),
         className:
@@ -474,7 +475,6 @@
         dictionary: activityDictionary,
       });
       lastQuestionText = intent === "question" ? (questionText || "").trim() : "";
-      const sliced = dataset.slice(0, MAX_ELEVES).map(cleanEntry);
       const analysisInput = {
         contexte: buildContext(
           summary,
