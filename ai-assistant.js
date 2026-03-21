@@ -21,7 +21,7 @@
   const DEFAULT_PROVIDER = "openai";
   const API_URL = "https://api.openai.com/v1/chat/completions";
   const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-  const GEMINI_MODEL_FALLBACKS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro", "gemini-pro"];
+  const GEMINI_MODEL_FALLBACKS = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-1.0-pro", "gemini-pro"];
   const GEMINI_MODEL_ALIASES = {
     "gemini-1.5-flash-latest": "gemini-1.5-flash",
     "gemini-1.5-pro-latest": "gemini-1.5-pro",
@@ -807,78 +807,159 @@
   }
 
   async function callGemini(apiKey, model, messages, options = {}) {
-    const text = messagesToPlaintext(messages);
-    const payload = JSON.stringify({
-      contents: [{ role: "user", parts: [{ text }] }],
+    const prompt = messagesToPlaintext(messages);
+    const candidates = getGeminiModelCandidates(model);
+    let lastError = null;
+    let allModelsMissing = true;
+
+    for (const candidate of candidates) {
+      const result = await requestGeminiModel(apiKey, candidate, prompt, options);
+      if (result.status === "success" && result.text) {
+        rememberModelSelection(candidate, "gemini");
+        return result.text;
+      }
+      if (result.status !== "model_missing") allModelsMissing = false;
+      if (result.error) console.warn(result.error.logMessage || result.error.message || result.error);
+      if (["invalid_key", "forbidden", "quota"].includes(result.status)) {
+        throw result.error;
+      }
+      if (!lastError || result.status === "network" || result.status === "other_error") {
+        lastError = result.error;
+      }
+    }
+
+    if (allModelsMissing) {
+      const fallbackModel = await findGeminiFallbackModel(apiKey);
+      if (fallbackModel) {
+        const fallbackResult = await requestGeminiModel(apiKey, fallbackModel, prompt, options);
+        if (fallbackResult.status === "success" && fallbackResult.text) {
+          rememberModelSelection(fallbackModel, "gemini");
+          return fallbackResult.text;
+        }
+        if (fallbackResult.error) console.warn(fallbackResult.error.logMessage || fallbackResult.error.message || fallbackResult.error);
+        if (["invalid_key", "forbidden", "quota"].includes(fallbackResult.status)) {
+          throw fallbackResult.error;
+        }
+        lastError = fallbackResult.error || lastError;
+      }
+    }
+
+    throw lastError || createFriendlyError(geminiUserMessage("generic"), "[Gemini] Aucune réponse exploitable.");
+  }
+
+  async function requestGeminiModel(apiKey, model, prompt, options = {}) {
+    const url = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const body = JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: options.temperature ?? 0.4,
         maxOutputTokens: options.max_tokens ?? 1024,
       },
     });
-    const candidates = getGeminiModelCandidates(model);
-    let lastModelError = null;
-    for (const candidate of candidates) {
-      try {
-        const output = await requestGemini(apiKey, candidate, payload);
-        rememberModelSelection(candidate, "gemini");
-        return output;
-      } catch (err) {
-        if (err?.geminiModelError) {
-          lastModelError = err;
-          console.warn(err.logMessage || err);
-          continue;
-        }
-        throw err;
-      }
-    }
-    if (lastModelError) {
-      console.error(lastModelError.logMessage || lastModelError, lastModelError);
-    }
-    throw createFriendlyError(
-      geminiUserMessage("modelUnavailable"),
-      lastModelError?.logMessage,
-      "modelUnavailable"
-    );
-  }
-
-  async function requestGemini(apiKey, model, payload) {
-    const url = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
     let resp;
     try {
       resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: payload,
+        body,
       });
     } catch (networkErr) {
-      throw createFriendlyError(
-        geminiUserMessage("network"),
-        `[Gemini ${model}] ${networkErr && networkErr.message ? networkErr.message : networkErr}`,
-        "network"
-      );
+      return {
+        status: "network",
+        error: createFriendlyError(
+          geminiUserMessage("network"),
+          `[Gemini ${model}] ${networkErr && networkErr.message ? networkErr.message : networkErr}`,
+          "network"
+        ),
+      };
     }
     const json = await resp.json().catch(() => ({}));
+    const errorPayload = {
+      status: resp.status,
+      code: json?.error?.code,
+      errorStatus: json?.error?.status,
+      model,
+    };
+    if (resp.status === 404) {
+      return {
+        status: "model_missing",
+        error: buildGeminiError("Modèle Gemini introuvable.", errorPayload),
+      };
+    }
+    if (resp.status === 429) {
+      return {
+        status: "quota",
+        error: buildGeminiError("Quota Gemini atteint.", errorPayload),
+      };
+    }
+    if (resp.status === 401) {
+      return {
+        status: "invalid_key",
+        error: buildGeminiError("Clé Gemini invalide.", errorPayload),
+      };
+    }
+    if (resp.status === 403) {
+      return {
+        status: "forbidden",
+        error: buildGeminiError("Accès refusé pour ce modèle Gemini.", errorPayload),
+      };
+    }
     if (!resp.ok) {
-      const message = json?.error?.message || "Erreur API Gemini.";
-      throw buildGeminiError(message, {
-        status: resp.status,
-        code: json?.error?.code,
-        errorStatus: json?.error?.status,
-        model,
-      });
+      return {
+        status: "other_error",
+        error: buildGeminiError(json?.error?.message || "Erreur API Gemini.", errorPayload),
+      };
     }
-    const candidate = json.candidates && json.candidates[0];
-    const parts = candidate && candidate.content && candidate.content.parts;
-    const output = Array.isArray(parts) ? parts.map((part) => part.text || "").join("\n") : "";
-    if (!output.trim()) {
-      throw buildGeminiError("Réponse vide de Gemini.", {
-        model,
-        status: resp.status,
-        logMessage: `[Gemini ${model}] Réponse vide reçue.`,
-        forceModelError: false,
-      });
+    const text = extractGeminiText(json);
+    if (!text) {
+      return {
+        status: "model_missing",
+        error: buildGeminiError("Réponse Gemini vide.", {
+          ...errorPayload,
+          forceModelError: false,
+          logMessage: `[Gemini ${model}] Réponse vide.`,
+        }),
+      };
     }
-    return output.trim();
+    return { status: "success", text };
+  }
+
+  async function findGeminiFallbackModel(apiKey) {
+    try {
+      const resp = await fetch(`${GEMINI_API_BASE}?key=${encodeURIComponent(apiKey)}`);
+      if (!resp.ok) return null;
+      const data = await resp.json().catch(() => null);
+      const models = Array.isArray(data?.models) ? data.models : [];
+      const candidate = models
+        .map((entry) => {
+          const name = (entry?.name || "").replace(/^models\//, "");
+          const supports = Array.isArray(entry?.supportedGenerationMethods)
+            ? entry.supportedGenerationMethods.includes("generateContent")
+            : false;
+          return { name, supports };
+        })
+        .filter((item) => item.name && item.supports)
+        .sort((a, b) => scoreGeminiModel(b.name) - scoreGeminiModel(a.name))[0];
+      return candidate?.name || null;
+    } catch (error) {
+      console.warn("Impossible de récupérer la liste des modèles Gemini pour fallback.", error);
+      return null;
+    }
+  }
+
+  function scoreGeminiModel(name = "") {
+    const lower = name.toLowerCase();
+    if (lower.includes("flash")) return 3;
+    if (lower.includes("pro")) return 2;
+    return 1;
+  }
+
+  function extractGeminiText(payload) {
+    const parts = payload?.candidates?.[0]?.content?.parts || [];
+    const first = parts.find((part) => typeof part?.text === "string" && part.text.trim());
+    if (first) return first.text.trim();
+    const fallback = parts.map((part) => (part && part.text ? String(part.text).trim() : "")).filter(Boolean).join("\n");
+    return fallback.trim();
   }
 
   function setStatus(element, text, type) {
