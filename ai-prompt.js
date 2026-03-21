@@ -1,26 +1,41 @@
 (function () {
-  const SECTION_SCHEMA = [
-    { key: "synthese", label: "Synthèse" },
-    { key: "eleves_difficulte", label: "Élèves en difficulté" },
-    { key: "eleves_a_surveiller", label: "Élèves à surveiller" },
-    { key: "points_forts", label: "Points forts" },
-    { key: "points_a_retravailler", label: "Points à retravailler" },
-    { key: "recommandations", label: "Recommandations pour la séance suivante" },
-    { key: "differenciation", label: "Différenciation" },
-  ];
+  const MODE_SCHEMAS = {
+    bilan: [
+      { key: "synthese", label: "Synthèse", type: "text" },
+      { key: "points_forts", label: "Points forts", type: "list" },
+      { key: "points_a_retravailler", label: "Points à retravailler", type: "list" },
+      { key: "suite", label: "Suite proposée", type: "list" },
+    ],
+    difficulte: [
+      { key: "synthese", label: "Synthèse", type: "text" },
+      { key: "eleves_difficulte", label: "Élèves en difficulté", type: "list" },
+      { key: "points_vigilance", label: "Points de vigilance", type: "list" },
+    ],
+    points_forts: [
+      { key: "synthese", label: "Synthèse", type: "text" },
+      { key: "points_forts", label: "Points forts", type: "list" },
+      { key: "idees_consolidation", label: "Idées pour consolider", type: "list" },
+    ],
+    suivi: [
+      { key: "synthese", label: "Synthèse", type: "text" },
+      { key: "priorites", label: "Priorités", type: "list" },
+      { key: "suggestions", label: "Suggestions", type: "list" },
+    ],
+    question: [
+      { key: "reponse", label: "Réponse", type: "text" },
+      { key: "pistes", label: "Pistes d'action", type: "list" },
+    ],
+  };
 
-  const QUESTION_SCHEMA = [
-    { key: "reponse", label: "Réponse à la question" },
-    { key: "suggestions", label: "Pistes concrètes" },
-  ];
+  const SECTION_SCHEMA = MODE_SCHEMAS.bilan;
+  const QUESTION_SCHEMA = MODE_SCHEMAS.question;
 
   const MODE_OBJECTIVES = {
-    bilan: "Fournis un bilan pédagogique complet de fin de séance en couvrant l’ensemble des points demandés.",
-    difficulte: "Fournis un diagnostic centré sur les élèves en difficulté et les leviers de remédiation tout en complétant toutes les sections.",
-    points_forts: "Valorise les réussites et les points forts observés en restant fidèle aux données, puis propose des idées pour consolider ces acquis.",
-    suivi: "Fournis un bilan mettant l’accent sur la préparation de la prochaine séance (objectifs, différenciation) tout en complétant toutes les sections.",
-    question:
-      "Réponds précisément à la question de l’enseignant en t’appuyant uniquement sur les données fournies, puis propose des pistes concrètes.",
+    bilan: "Résume la séance en trois idées clés et ce qui suit.",
+    difficulte: "Repère les difficultés majeures et ce qu’il faut surveiller rapidement.",
+    points_forts: "Mets en valeur les réussites et indique comment les consolider.",
+    suivi: "Prépare la prochaine séance avec des priorités simples et actionnables.",
+    question: "Réponds précisément à la question en restant concret et ancré dans les données.",
     test: "Réponds simplement par la chaîne «OK» si tout est clair.",
   };
 
@@ -28,24 +43,22 @@
     const payload = analysisInput || {};
     const contexte = payload.contexte || {};
     const objectif = MODE_OBJECTIVES[mode] || MODE_OBJECTIVES.bilan;
-    const schema = mode === "question" ? QUESTION_SCHEMA : SECTION_SCHEMA;
+    const schema = MODE_SCHEMAS[mode] || SECTION_SCHEMA;
     const instructions = [
       "Tu es un assistant pédagogique francophone pour des enseignants d'EPS.",
       "Analyse uniquement les données transmises. Si une information est absente, indique-le clairement sans l'inventer.",
       "Les colonnes détectées sont fournies dans le contexte. Si aucune signification n'est précisée, reste descriptif et indique que l'abréviation n'a pas été expliquée.",
       "Des aides d'interprétation peuvent être présentes dans le champ `interpretation`. Utilise-les après les informations explicites de la séance, puis complète avec le dictionnaire associé à l'activité, puis avec les indications saisies par l'enseignant.",
       "Pour toute colonne ou abréviation non définie, mentionne simplement qu'elle n'est pas expliquée au lieu d'en inventer le sens.",
-      "Chaque section doit tenir en 1 à 3 phrases ou 3 puces maximum.",
+      "Chaque champ texte doit tenir en UNE SEULE phrase simple (≤ 12 mots).",
+      "Chaque liste doit contenir au maximum 3 éléments courts et concrets.",
       "Ne cite pas de noms de colonnes ou de codes techniques sauf s'ils sont explicitement définis dans les interprétations.",
       "N'utilise jamais de blocs de code dans ta réponse finale.",
       "Le ton doit rester professionnel, positif et directement exploitable.",
-      "Structure obligatoirement ta réponse en JSON strict avec les clés suivantes :",
-      JSON.stringify(schema.map((section) => section.key), null, 2),
-      "Pour chaque clé :",
-      "- utilise une chaîne de caractères pour les paragraphes courts ;",
-      "- utilise un tableau de chaînes si plusieurs éléments sont attendus (ex. listes d'élèves ou de points) ;",
-      "- place la valeur «Aucune information disponible.» si tu n'as rien de pertinent.",
-      "N'ajoute aucun autre champ.",
+      "Structure obligatoirement ta réponse en JSON strict, sans ajout de texte avant ou après. Utilise exactement la structure suivante :",
+      buildStructureHint(schema),
+      "Chaque champ doit être rempli. Si aucune donnée, écris «Aucune information disponible.» ou un tableau vide.",
+      "N'ajoute aucun autre champ et n'utilise pas de blocs ```.",
       mode === "question"
         ? "Réponds obligatoirement à la question fournie en t’appuyant sur les données de séance. N’invente jamais de valeur."
         : null,
@@ -62,7 +75,7 @@
       interpretation: payload.interpretation || null,
     };
 
-    const messages = [
+  const messages = [
       {
         role: "system",
         content:
@@ -84,4 +97,14 @@
     SECTION_SCHEMA,
     QUESTION_SCHEMA,
   };
+
+  function buildStructureHint(schema = []) {
+    const fields = schema
+      .map((section) => {
+        const value = section.type === "list" ? '["..."]' : '"..."';
+        return `  "${section.key}": ${value}`;
+      })
+      .join(",\n");
+    return `{\n${fields}\n}`;
+  }
 })();

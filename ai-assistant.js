@@ -37,8 +37,10 @@
     network: "Connexion impossible au service Gemini.",
     generic: "Analyse Gemini indisponible pour le moment.",
   };
-  const MAX_ELEVES = 150;
+  const MAX_ELEVES = 60;
+  const MAX_EXTRA_COLUMNS = 4;
   const CORE_COLUMNS = new Set(["nom", "prenom", "classe", "sexe", "distance", "vitesse", "vma", "temps_total"]);
+  const INCOMPLETE_RESPONSE_ERROR = "AI_INCOMPLETE_RESPONSE";
   const SECTION_ICONS = {
     Synthèse: "📘",
     "Élèves en difficulté": "⚠️",
@@ -47,8 +49,16 @@
     "Points à retravailler": "🔄",
     "Recommandations pour la séance suivante": "🧭",
     Différenciation: "🎯",
-    "Réponse à la question": "💬",
-    "Pistes concrètes": "🛠️",
+    "Suite proposée": "📅",
+    "Points de vigilance": "⚠️",
+    Priorités: "🎯",
+    Suggestions: "💡",
+    "Idées pour consolider": "🧱",
+    "Réponse": "💬",
+    "Pistes d'action": "🛠️",
+    "Bilan textuel": "📄",
+    "Question posée": "❓",
+    Erreur: "⚠️",
     "Bilan textuel": "📄",
     "Question posée": "❓",
     Erreur: "⚠️",
@@ -423,6 +433,7 @@
   }
 
   async function handleAnalysis(intent = "bilan", questionText = "") {
+    console.log("[ScanProf IA] handleAnalysis invoked from scanprofV2/ai-assistant.js (intent:", intent, ")");
     lastIntent = intent;
     const statusTarget = intent === "question" ? refs.questionStatus : refs.runStatus;
     const apiKey = getApiKey();
@@ -498,12 +509,18 @@
       }
       const { messages, schema } = builder.buildPrompt({ analysisInput, mode: intent });
       const model = getSelectedModel();
-      const responseText = await callProvider(providerKey, apiKey, model, messages, {
-        temperature: intent === "difficulte" ? 0.15 : 0.25,
-        max_tokens: 1200,
-        intent,
+      const processed = await generateAIResponseWithRetry({
+        providerKey,
+        apiKey,
+        model,
+        messages,
+        schema,
+        options: {
+          temperature: intent === "difficulte" ? 0.15 : 0.25,
+          max_tokens: 900,
+          intent,
+        },
       });
-      const processed = processAIResponse(schema, responseText);
       renderReport(schema, processed);
       setStatus(statusTarget, "Analyse terminée 🎉", "success");
       setModalLoading(false);
@@ -559,22 +576,64 @@
     return info;
   }
 
+  async function generateAIResponseWithRetry({ providerKey, apiKey, model, messages, schema, options = {} }) {
+    let attempt = 0;
+    let currentMessages = messages;
+    while (attempt < 2) {
+      try {
+        const responseText = await callProvider(providerKey, apiKey, model, currentMessages, options);
+        return processAIResponse(schema, responseText);
+      } catch (err) {
+        if (isIncompleteResponseError(err) && attempt === 0) {
+          attempt += 1;
+          currentMessages = shortenMessagesForRetry(messages);
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw createIncompleteResponseError();
+  }
+
+  function shortenMessagesForRetry(messages = []) {
+    return messages.map((msg, index) => {
+      if (index === messages.length - 1 && msg.role === "user") {
+        return {
+          ...msg,
+          content: `${msg.content}\n\nConsigne additionnelle : Réponds en JSON strict très court (une phrase par champ, listes de 2 éléments maximum).`,
+        };
+      }
+      return msg;
+    });
+  }
+
   function processAIResponse(schema, rawText) {
     const cleaned = stripCodeFences(rawText);
     if (!cleaned) {
-      throw new Error("Réponse IA vide, merci de relancer l’analyse.");
+      throw createIncompleteResponseError("Réponse IA vide, merci de relancer l’analyse.");
     }
     const parsed = tryParseJson(cleaned);
     if (parsed && typeof parsed === "object") {
       return { type: "structured", data: parsed, raw: cleaned };
     }
     if (looksLikeJson(cleaned)) {
-      throw new Error("Réponse IA incomplète, merci de relancer l’analyse.");
+      throw createIncompleteResponseError("Réponse IA incomplète, merci de relancer l’analyse.");
     }
     if (!cleaned.trim()) {
-      throw new Error("Réponse IA vide, merci de relancer l’analyse.");
+      throw createIncompleteResponseError("Réponse IA vide, merci de relancer l’analyse.");
     }
     return { type: "text", text: cleaned.trim(), raw: cleaned };
+  }
+
+  function createIncompleteResponseError(message) {
+    const err = new Error(message || "Réponse IA incomplète, merci de relancer l’analyse.");
+    err.code = INCOMPLETE_RESPONSE_ERROR;
+    err.userMessage = err.message;
+    return err;
+  }
+
+  function isIncompleteResponseError(err) {
+    return err && err.code === INCOMPLETE_RESPONSE_ERROR;
   }
 
   function stripCodeFences(text = "") {
@@ -922,7 +981,33 @@
       if (key.startsWith("__")) return;
       clone[key] = entry[key];
     });
-    return clone;
+    return compactEntry(clone);
+  }
+
+  function compactEntry(entry) {
+    if (!entry || typeof entry !== "object") return entry;
+    const essentials = [
+      "nom",
+      "prenom",
+      "classe",
+      "sexe",
+      "distance",
+      "vitesse",
+      "vma",
+      "temps_total",
+    ];
+    const result = {};
+    essentials.forEach((field) => {
+      if (entry[field] != null && entry[field] !== "") result[field] = entry[field];
+    });
+    let extrasAdded = 0;
+    Object.keys(entry).forEach((key) => {
+      if (essentials.includes(key)) return;
+      if (extrasAdded >= MAX_EXTRA_COLUMNS) return;
+      result[key] = entry[key];
+      extrasAdded += 1;
+    });
+    return result;
   }
 
   function getApiKey() {
