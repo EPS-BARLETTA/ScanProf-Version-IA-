@@ -28,6 +28,14 @@
     "gemini-pro-latest": "gemini-pro",
     "gemini-1.0-pro-latest": "gemini-1.0-pro",
   };
+  const GEMINI_USER_MESSAGES = {
+    invalidKey: "Cette clé Gemini est invalide ou mal renseignée.",
+    forbidden: "Cette clé Gemini n’a pas accès au modèle requis.",
+    quota: "Le quota de cette clé Gemini est atteint ou temporairement indisponible.",
+    modelUnavailable: "Aucun modèle Gemini compatible n’est disponible avec cette clé.",
+    network: "Connexion impossible au service Gemini.",
+    generic: "Analyse Gemini indisponible pour le moment.",
+  };
   const MAX_ELEVES = 150;
   const CORE_COLUMNS = new Set(["nom", "prenom", "classe", "sexe", "distance", "vitesse", "vma", "temps_total"]);
   const SECTION_ICONS = {
@@ -52,6 +60,10 @@
   let lastQuestionText = "";
 
   document.addEventListener("DOMContentLoaded", initAssistant);
+
+  function geminiUserMessage(type) {
+    return GEMINI_USER_MESSAGES[type] || GEMINI_USER_MESSAGES.generic;
+  }
 
   function normalizeModelForProvider(providerKey, modelName) {
     if (!modelName) return null;
@@ -100,31 +112,67 @@
     }
   }
 
-  function detectGeminiModelError(status, message = "") {
+  function detectGeminiModelError(status, message = "", errorStatus = "") {
+    const code = Number(status) || 0;
     const lower = (message || "").toLowerCase();
-    if (status === 404) return true;
-    if (status === 403 && lower.includes("model")) return true;
+    const statusTag = (errorStatus || "").toUpperCase();
+    if (code === 404 || statusTag.includes("NOT_FOUND")) return true;
+    if (code === 403) {
+      if (lower.includes("model") || lower.includes("permission") || lower.includes("access")) return true;
+      if (statusTag.includes("PERMISSION")) return true;
+    }
+    if (code === 400 && lower.includes("model")) return true;
     if (lower.includes("model") && lower.includes("not found")) return true;
     return false;
   }
 
+  function classifyGeminiError(meta = {}, message = "", shouldRetry = false) {
+    if (meta.category) return meta.category;
+    if (meta.networkError) return "network";
+    const status = Number(meta.status) || 0;
+    const statusText = (meta.errorStatus || "").toUpperCase();
+    const text = (message || "").toLowerCase();
+    if (status === 401 || statusText.includes("UNAUTHENTICATED") || text.includes("api key") || text.includes("invalid key")) {
+      return "invalidKey";
+    }
+    if (status === 403 || statusText.includes("PERMISSION") || text.includes("permission") || text.includes("not have access") || text.includes("access denied") || text.includes("not authorized")) {
+      return "forbidden";
+    }
+    if (status === 429 || status === 503 || statusText.includes("RESOURCE_EXHAUSTED") || text.includes("quota") || text.includes("exceeded") || text.includes("rate limit")) {
+      return "quota";
+    }
+    if (shouldRetry || status === 404 || statusText.includes("NOT_FOUND")) {
+      return "modelUnavailable";
+    }
+    return "generic";
+  }
+
   function buildGeminiError(message, meta = {}) {
     const text = message || "Erreur API Gemini.";
+    const shouldRetry =
+      meta.forceModelError != null
+        ? !!meta.forceModelError
+        : detectGeminiModelError(meta.status, text, meta.errorStatus);
+    const category = classifyGeminiError(meta, text, shouldRetry);
     const err = new Error(text);
     err.status = meta.status;
     err.code = meta.code;
     err.provider = "gemini";
     err.model = meta.model;
-    err.geminiModelError = meta.forceModelError ?? detectGeminiModelError(meta.status, text);
+    err.category = category;
+    err.userMessage = geminiUserMessage(category);
+    err.geminiModelError = shouldRetry;
     err.logMessage = meta.logMessage || `[Gemini ${meta.model || "?"}] ${text}${meta.status ? ` (HTTP ${meta.status})` : ""}`;
     return err;
   }
 
-  function createFriendlyError(message, logMessage) {
+  function createFriendlyError(message, logMessage, category = "generic") {
     const err = new Error(message);
     err.userMessage = message;
     err.logMessage = logMessage || message;
     err.provider = "gemini";
+    err.category = category;
+    err.geminiModelError = false;
     return err;
   }
 
@@ -786,22 +834,36 @@
     if (lastModelError) {
       console.error(lastModelError.logMessage || lastModelError, lastModelError);
     }
-    throw createFriendlyError("Le modèle Gemini associé à cette clé n’est pas disponible.", lastModelError?.logMessage);
+    throw createFriendlyError(
+      geminiUserMessage("modelUnavailable"),
+      lastModelError?.logMessage,
+      "modelUnavailable"
+    );
   }
 
   async function requestGemini(apiKey, model, payload) {
     const url = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: payload,
-    });
+    let resp;
+    try {
+      resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      });
+    } catch (networkErr) {
+      throw createFriendlyError(
+        geminiUserMessage("network"),
+        `[Gemini ${model}] ${networkErr && networkErr.message ? networkErr.message : networkErr}`,
+        "network"
+      );
+    }
     const json = await resp.json().catch(() => ({}));
     if (!resp.ok) {
       const message = json?.error?.message || "Erreur API Gemini.";
       throw buildGeminiError(message, {
         status: resp.status,
         code: json?.error?.code,
+        errorStatus: json?.error?.status,
         model,
       });
     }
@@ -811,6 +873,7 @@
     if (!output.trim()) {
       throw buildGeminiError("Réponse vide de Gemini.", {
         model,
+        status: resp.status,
         logMessage: `[Gemini ${model}] Réponse vide reçue.`,
         forceModelError: false,
       });
