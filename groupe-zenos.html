@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Groupes ZENOS Tour</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="style.css">
+
+  <style>
+    .wrap { min-height: 100vh; display: grid; grid-template-rows: 1fr auto; background: var(--sp-bg); color: var(--sp-text); }
+    .main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; margin: 8px 0 14px; }
+
+    .panel { background:var(--sp-surface); border-radius: 10px; box-shadow: var(--sp-card-shadow); padding: 12px; }
+
+    table.zenos-unique { width: 100%; border-collapse: collapse; }
+    table.zenos-unique th, table.zenos-unique td { border: 1px solid var(--sp-border); padding: 8px; text-align: center; }
+    table.zenos-unique thead th { background: var(--sp-sticky-bg); }
+
+    /* Groupes alternés */
+    tr.group-blue td { background: var(--sp-table-odd); }
+    tr.group-white td { background: var(--sp-table-even); }
+    tr.separator-row td { height: 8px; border: none; background: transparent; }
+
+    /* Restants */
+    .unassigned-title { margin: 14px 0 6px; font-weight: 700; color: var(--sp-accent-red); }
+    table.unassigned { width: 100%; border-collapse: collapse; }
+    table.unassigned th, table.unassigned td { border: 1px solid var(--sp-border); padding: 8px; text-align: center; }
+    table.unassigned thead th { background: var(--sp-accent-orange); }
+    table.unassigned tbody td { background: var(--sp-table-even); }
+
+    .note { color: var(--sp-accent-red); font-style: italic; margin-top: 6px; }
+
+    .topbar { display:flex; gap:10px; align-items:center; justify-content:center; flex-wrap:wrap; margin-bottom: 8px; }
+    .topbar select { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--sp-border); background: var(--sp-surface); color: var(--sp-text); }
+  </style>
+
+  <script src="theme.js" defer></script>
+  <script src="zenos.js" defer></script>
+</head>
+<body>
+  <div class="wrap">
+    <main class="main">
+      <h1 style="text-align:center; margin:6px 0 12px;">🧬 Groupes ZENOS Tour</h1>
+
+      <div class="topbar panel">
+        <label for="classe-select"><strong>Classe :</strong></label>
+        <select id="classe-select"></select>
+        <button id="btn-generer-zenos" class="button yellow">🎲 Générer les groupes ZENOS</button>
+        <button class="button" onclick="exporterGroupesCSV()">📥 Exporter CSV</button>
+        <button class="button grey" onclick="imprimerGroupes()">🖨 Imprimer</button>
+        <button class="button" onclick="exporterGroupesPDF()">🖨 PDF</button>
+        <button class="button" onclick="envoyerGroupesParMail()">✉️ Envoyer par mail</button>
+      </div>
+
+      <div id="groupes-panel" class="panel">
+        <h3 id="titre-classe" style="text-align:center; margin: 6px 0 10px;"></h3>
+        <div id="groupes"></div>
+        <div id="restants"></div>
+      </div>
+
+      <div class="actions" style="margin-top:12px;">
+        <a href="participants.html" class="button">↩️ Retour au tableau</a>
+        <a href="index.html" class="button green">🏠 Accueil</a>
+        <a href="aide.html" class="button purple">❓ Aide</a>
+      </div>
+    </main>
+
+    <footer>
+      ScanProf - Équipe EPS Lycée Vauban - LUXEMBOURG - JB
+    </footer>
+  </div>
+</body>
+</html>

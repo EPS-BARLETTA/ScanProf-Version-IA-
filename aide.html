@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Aide - ScanProf</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .wrap { min-height: 100vh; display: grid; grid-template-rows: 1fr auto; background: var(--sp-bg); color: var(--sp-text); }
+    main { max-width: 900px; margin: 0 auto; padding: 16px; }
+    header { background: var(--sp-primary); color: #fff; padding: 14px; text-align: center; }
+    section { margin: 12px 0; }
+    .info-card { background: var(--sp-surface); border-radius: 16px; padding: 18px; box-shadow: var(--sp-card-shadow); border: 1px solid rgba(0,0,0,.05); }
+    .info-card h2 { margin-top: 0; }
+    .info-card ul, .info-card ol, .info-card p { margin: 0 0 10px; line-height: 1.45; }
+    .info-card[data-tone="lavender"] { background: #f4edff; border-color: #e0d4ff; }
+    .info-card[data-tone="mint"] { background: #edfff9; border-color: #c6f2e1; }
+    .info-card[data-tone="peach"] { background: #fff5ec; border-color: #ffdcbc; }
+    .info-card[data-tone="sky"] { background: #ecf5ff; border-color: #c8e4ff; }
+    .info-card[data-tone="amber"] { background: #fffbe6; border-color: #ffe8b5; }
+    .page-nav { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin:16px 0 8px; }
+    ol { margin-left: 20px; }
+    ul { margin-left: 20px; }
+    .actions { display:flex; gap:10px; justify-content:center; margin-top: 10px; }
+    footer { background:var(--sp-primary); color:#fff; text-align:center; padding:10px 12px; }
+  </style>
+  <script src="theme.js" defer></script>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>❓ Aide - Utilisation de ScanProf</h1>
+    </header>
+
+    <main>
+      <section class="info-card" data-tone="sky">
+        <h2>📌 Fonctionnement général</h2>
+        <p><strong>ScanProf</strong> collecte les résultats d’élèves via des QR codes JSON (RunStats, ClimbTrack, autres outils). Chaque scan alimente un tableau central, que vous pouvez trier, filtrer, exporter ou partager.</p>
+        <p>Le flux est toujours : générer un QR à la fin d’une séance → scanner avec ScanProf → traiter dans les tableaux ou exporter pour les partager. L’application accompagne aussi des projets comme le <strong>ZENOS Tour</strong>.</p>
+      </section>
+
+      <nav class="page-nav" aria-label="Navigation rapide">
+        <a href="scanner.html" class="button blue">📷 Scanner</a>
+        <a href="participants.html" class="button green">👥 Participants</a>
+        <a href="classes.html" class="button teal">🗂 Classes & séances</a>
+        <a href="classes.html#new-class-section" class="button yellow">➕ Créer une classe</a>
+        <a href="aide.html" class="button purple" aria-current="page">❓ Aide</a>
+      </nav>
+
+      <section class="info-card" data-tone="lavender">
+        <h2>🏠 Accueil</h2>
+        <ul>
+          <li><strong>Scanner</strong> : lance le lecteur QR pour ajouter des élèves.</li>
+          <li><strong>Participants enregistrés</strong> : tableau central pour trier, filtrer, exporter/importer CSV, et générer un PDF.</li>
+          <li><strong>Groupes ZENOS Tour</strong> : crée des groupes de 4 équilibrés automatiquement.</li>
+        </ul>
+      </section>
+
+      <section class="info-card" data-tone="mint">
+        <h2>📷 Scanner un QR Code</h2>
+        <ul>
+          <li>Placez un QR code (format JSON) devant la caméra.</li>
+          <li>Les QR peuvent contenir <strong>1 ou 2 élèves</strong>. Les doublons sont évités (nom+prénom+classe).</li>
+          <li>Chiffrement ? Non, simplement la remontée de données lisibles pour les tableaux.</li>
+        </ul>
+      </section>
+
+      <section class="info-card" data-tone="peach">
+        <h2>👥 Participants enregistrés</h2>
+        <ul>
+          <li><strong>Mode édition</strong> : actif par défaut, il est symbolisé par le bouton violet ✏️. Touchez un champ pour écrire, utilisez <kbd>Tab</kbd> pour naviguer et “Ajouter un élève” ouvre une nouvelle ligne vierge.</li>
+          <li><strong>Colonnes personnalisées</strong> : les boutons “Ajouter/Supprimer une colonne” modifient l’architecture du tableau, leurs réglages sont stockés dans le navigateur.</li>
+          <li><strong>Menu déroulant</strong> : un détail “Options d’écriture” rassemble toutes les actions d’édition (colonnes, lignes, mode). Une autre rubrique “Options d’archivage” contient les exportations, l’impression et l’archivage vers vos classes.</li>
+          <li><strong>Tri + filtre texte</strong> : triez sur n’importe quelle colonne, filtrez sur des mots-clés (ex. “Lola”, “5A”, “F”).</li>
+          <li><strong>Navigation rapide</strong> : la barre en bas conserve les raccourcis Accueil, Scanner, Classes & séances, Aide et Groupes ZENOS.</li>
+        </ul>
+      </section>
+
+      <section class="info-card" data-tone="amber">
+        <h2>🗂 Classes & Séances</h2>
+        <p>Chaque classe est un dossier. Sur la page “Classes” vous créez une classe (nom + couleur), puis pour cette classe vous ouvrez la liste des activités. Chacune de ces activités est un sous-dossier dans lequel vous pouvez créer autant de séances que vous le souhaitez.</p>
+        <ul>
+          <li><strong>Une activité par dossier</strong> : badminton, escalade, français… : vous pouvez ajouter/modifier/supprimer une activité autant de fois que nécessaire.</li>
+          <li><strong>Séances archivées</strong> : à l’intérieur d’une activité, chaque séance est un tableau complet (comme sur “Participants”). Vous pouvez renommer la séance, ajouter/supprimer des colonnes, saisir des données ou les exporter.</li>
+          <li><strong>Connexion avec la page Participants</strong> : depuis cette page, le bouton “💾 Archiver dans mes classes” copie un tableau dans la classe/activité choisie.</li>
+          <li><strong>Modifier en continu</strong> : sur les pages d’activités, le même éditeur de tableau est disponible (mode écriture, colonnes personnalisées, lignes) – vous avez une flexibilité totale.</li>
+          <li><strong>Sauvegarde</strong> : tout reste local. Exportez régulièrement pour garder une copie dans Fichiers, Drive ou iCloud.</li>
+        </ul>
+      </section>
+
+      <section class="info-card" data-tone="sky">
+        <h2>🔄 Synchronisation Participants ↔ Classes</h2>
+        <p>Chaque tableau que tu vois dans “Participants enregistrés” peut être envoyé vers ton classeur local : il suffit de cliquer sur <strong>💾 Archiver dans mes classes</strong>, de choisir une classe, puis une activité pour déplacer la séance dans un dossier dédié.</p>
+        <ul>
+          <li><strong>Renommer</strong> une classe ou une activité actualise immédiatement l’arborescence : si une séance n’apparaît pas, vérifie que tu l’as archivée dans la bonne classe/activité.</li>
+          <li><strong>Exports</strong> : les CSV/PDF produits depuis Participants sont identiques à ceux que tu peux générer depuis Chaque activité (bouton “Exporter CSV” sur les séances).</li>
+          <li><strong>Réouverture</strong> : les séances archivées s’ouvrent avec le même éditeur (mode écriture et colonnes personnalisées) que celui de Participants, donc tu peux continuer de travailler dessus après l’archivage.</li>
+        </ul>
+      </section>
+
+      <section class="info-card" data-tone="mint">
+        <h2>💾 Sauvegardes & exports</h2>
+        <p>Toutes les données restent stockées localement. Exportez vos tableaux régulièrement pour éviter une perte liée au cache du navigateur :</p>
+        <ul>
+          <li><strong>CSV</strong> : au niveau d’une activité ou d’une classe entière.</li>
+          <li><strong>Impression / PDF</strong> : disponible dans la page Participants avant d’utiliser le partage iOS/Android.</li>
+          <li><strong>Copie manuelle</strong> : stockez les exports dans Fichiers, Drive, iCloud ou un dossier partagé.</li>
+        </ul>
+      </section>
+
+      <section class="info-card" data-tone="sky">
+        <h2>📤 Partager le PDF depuis iPad/iPhone</h2>
+        <p>Pour envoyer la liste des participants en <strong>PDF</strong> par mail (ou l’enregistrer dans Fichiers) :</p>
+        <ol>
+          <li>Dans <em>Participants enregistrés</em>, touchez <strong>🖨️ Imprimer / PDF</strong>.</li>
+          <li>Dans la fenêtre d’aperçu iOS, touchez l’icône de <strong>partage</strong> en haut à droite.</li>
+          <li>Choisissez <strong>Mail</strong>, <strong>Messages</strong> ou <strong>Enregistrer dans Fichiers</strong>.</li>
+        </ol>
+        <p>Astuce : vous pouvez aussi <em>AirDrop</em> le PDF vers un Mac.</p>
+      </section>
+
+      <section class="info-card" data-tone="lavender">
+        <h2>🧬 Groupes ZENOS Tour</h2>
+        <p>Création de groupes de 4 élèves équilibrés selon la VMA (un haut, un bas, deux intermédiaires). Les classes sont <strong>normalisées automatiquement</strong> (ex. “5ème A”, “5A”, “5 a”… → <strong>5A</strong>) afin d’éviter les erreurs de saisie.</p>
+        <ul>
+          <li>Affichage en <strong>un seul tableau</strong> avec groupes alternés <em>(bleu/blanc)</em>.</li>
+          <li><strong>Élèves à attribuer manuellement</strong> listés en bas (couleur différente).</li>
+          <li>Actions : <strong>CSV</strong>, <strong>Imprimer</strong>, <strong>PDF</strong>, <strong>Mail</strong>.</li>
+        </ul>
+      </section>
+
+      <div class="actions">
+        <a href="index.html" class="button green">🏠 Retour à l'accueil</a>
+      </div>
+    </main>
+
+    <footer>
+      ScanProf - Équipe EPS Lycée Vauban - LUXEMBOURG - JB
+    </footer>
+  </div>
+</body>
+</html>

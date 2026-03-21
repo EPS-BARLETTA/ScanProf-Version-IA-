@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Participants enregistrés</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .wrap { min-height: 100vh; display: grid; grid-template-rows: 1fr auto; background: var(--sp-bg); }
+    .main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; margin: 6px 0 10px; }
+    .blue { background: var(--sp-primary); color:#fff; border-color: transparent; }
+    .red { background: var(--sp-accent-red); color:#fff; border-color: transparent; }
+    .green { background: var(--sp-accent-green); color:#fff; border-color: transparent; }
+    .yellow { background: var(--sp-accent-yellow); color:#222; border-color: transparent; }
+    .purple { background: var(--sp-accent-purple); color:#fff; border-color: transparent; }
+    .teal { background: var(--sp-accent-teal); color:#fff; border-color: transparent; }
+    .orange { background: var(--sp-accent-orange); color:#222; border-color: transparent; }
+    .menu-dropdowns { display:flex; flex-direction:column; gap:10px; margin:16px 0; }
+    .menu-group { border:1px solid var(--sp-border); border-radius:14px; padding:10px 14px; background:var(--sp-table-even); box-shadow:var(--sp-card-shadow); }
+    .menu-group summary { font-weight:600; cursor:pointer; list-style:none; }
+    .menu-group summary::-webkit-details-marker { display:none; }
+    .menu-options { margin-top:8px; display:flex; flex-wrap:wrap; gap:8px; }
+    .nav-row { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-top:16px; }
+
+    .table-wrapper { background: var(--sp-surface); border-radius: 10px; box-shadow: var(--sp-card-shadow); padding: 12px; overflow-x: auto; }
+    table { width:100%; border-collapse: collapse; min-width: 720px; }
+    th, td { border: 1px solid var(--sp-border); padding: 8px; text-align: center; }
+    thead th { background: var(--sp-sticky-bg); }
+    tbody tr.pair { background: var(--sp-table-even); }
+    tbody tr.impair { background: var(--sp-table-odd); }
+    footer { background: var(--sp-primary); color:#fff; text-align:center; padding:10px 12px; }
+    input[type="text"], input[type="number"] { padding: 8px 10px; border:1px solid var(--sp-border); border-radius: 6px; min-width: 220px; background: var(--sp-surface); color: var(--sp-text); }
+
+    /* ---- Post-it mémo (discret) ---- */
+    .memo-suppr{
+      display:inline-block; margin-top:8px; padding:6px 10px;
+      font-size:.95rem; border:1px solid var(--sp-memo-border); background:var(--sp-memo-bg); border-radius:8px;
+    }
+
+    .ai-panel{margin-top:20px;border:1px solid var(--sp-border);border-radius:16px;padding:20px;background:var(--sp-surface);box-shadow:var(--sp-card-shadow);display:flex;flex-direction:column;gap:16px;transition:box-shadow .2s ease,opacity .2s ease;}
+    .ai-panel.ai-panel--busy{opacity:0.75;}
+    .ai-panel__head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
+    .ai-panel__head h2{margin:0;font-size:1.2rem;}
+    .ai-panel__note{margin:4px 0 0;font-size:0.9rem;color:var(--sp-muted);}
+    .ai-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;padding:12px;border-radius:14px;background:var(--sp-table-odd);}
+    .ai-summary-item{display:flex;flex-direction:column;gap:2px;}
+    .ai-summary-label{font-size:0.8rem;color:var(--sp-muted);}
+    .ai-summary-value{font-size:1rem;font-weight:600;}
+    .ai-field{display:flex;flex-direction:column;gap:6px;font-size:0.9rem;}
+    .ai-field input,
+    .ai-field textarea{padding:9px 12px;border-radius:10px;border:1px solid var(--sp-border);background:var(--sp-table-even);color:var(--sp-text);font-size:0.95rem;}
+    .ai-field textarea{min-height:90px;resize:vertical;}
+    .ai-input-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+    .ai-action-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;}
+    .ai-btn{border-radius:12px;padding:10px 18px;font-size:0.95rem;cursor:pointer;border:1px solid transparent;background:var(--sp-table-even);color:var(--sp-text);transition:background .2s ease,transform .2s ease;}
+    .ai-btn.primary{background:var(--sp-primary);color:#fff;border-color:var(--sp-primary);font-weight:600;}
+    .ai-btn.outline{background:transparent;border-color:var(--sp-border);}
+    .ai-btn.danger{border-color:var(--sp-accent-red,#c00);color:var(--sp-accent-red,#c00);background:transparent;}
+    .ai-btn.text{background:none;border:none;color:var(--sp-muted);padding:0;text-decoration:underline;}
+    .ai-btn:hover{transform:translateY(-1px);}
+    .ai-status{min-height:1.1em;font-size:0.9rem;color:var(--sp-muted);}
+    .ai-question{border-top:1px solid var(--sp-border);padding-top:14px;display:flex;flex-direction:column;gap:10px;}
+    .ai-question-actions{display:flex;justify-content:flex-start;}
+    .ai-question-suggestions{display:flex;flex-wrap:wrap;gap:8px;font-size:0.85rem;color:var(--sp-muted);}
+    .ai-question-suggestions button{border:none;background:var(--sp-table-even);border-radius:999px;padding:6px 12px;font-size:0.85rem;cursor:pointer;}
+    .ai-result-icon{margin-right:8px;font-size:1.2rem;}
+
+    .ai-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9000;padding:16px;}
+    .ai-modal.sp-hidden{display:none;}
+    .ai-modal__card{width:min(960px,95vw);max-height:92vh;overflow:hidden;border-radius:18px;background:var(--sp-surface,#fff);box-shadow:0 25px 60px rgba(0,0,0,.45);display:flex;flex-direction:column;}
+    .ai-modal__header{padding:14px 16px;border-bottom:1px solid var(--sp-border);display:flex;align-items:center;justify-content:space-between;gap:10px;}
+    .ai-modal__body{padding:16px;overflow:auto;background:var(--sp-table-even,#f8f8f8);}
+    .ai-modal__footer{padding:14px 16px;border-top:1px solid var(--sp-border);display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;}
+    .ai-modal__section{margin-bottom:16px;padding:12px;border-radius:12px;background:var(--sp-surface);box-shadow:var(--sp-card-shadow);}
+    .ai-modal__section-header{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+    .ai-modal__section h3{margin:0;font-size:1rem;}
+    .ai-modal__loading{display:flex;align-items:center;gap:10px;font-weight:600;}
+    .ai-modal__close{border:none;background:transparent;font-size:1.3rem;cursor:pointer;}
+    .sp-hidden{display:none !important;}
+  </style>
+
+  <script src="theme.js" defer></script>
+  <script src="classes-store.js" defer></script>
+  <script src="participants.js" defer></script>
+  <script src="ai-prompt.js" defer></script>
+  <script src="ai-assistant.js" defer></script>
+</head>
+<body>
+  <div class="wrap">
+    <main class="main">
+      <h1 style="text-align:center; margin:6px 0 10px;">👥 Participants enregistrés</h1>
+
+      <!-- Tri -->
+      <div class="actions">
+        <label for="tri-select">Trier par :</label>
+        <select id="tri-select"></select>
+        <button class="button blue" onclick="trierParticipants()">🔃 Trier</button>
+        <button class="button red" onclick="resetData()">♻️ Réinitialiser</button>
+      </div>
+
+      <!-- Filtre texte -->
+      <div class="actions">
+        <label for="filtre-txt">Filtrer (texte) :</label>
+        <input id="filtre-txt" type="text" placeholder="ex. Lola, 5A, F..." oninput="filtrerTexte()">
+        <button class="button" onclick="filtrerTexte()">🔎 Rechercher</button>
+      </div>
+
+      <!-- Assistant IA -->
+      <section class="ai-panel" id="ai-panel">
+        <div class="ai-panel__head">
+          <div>
+            <h2>Assistant IA</h2>
+            <p class="ai-panel__note">La clé reste stockée localement sur cet appareil.</p>
+          </div>
+          <button type="button" class="ai-btn text" id="ai-test-key-btn">Tester la connexion</button>
+        </div>
+        <div class="ai-summary">
+          <div class="ai-summary-item">
+            <span class="ai-summary-label">Classe</span>
+            <span class="ai-summary-value" id="ai-summary-class">—</span>
+          </div>
+          <div class="ai-summary-item">
+            <span class="ai-summary-label">Élèves</span>
+            <span class="ai-summary-value" id="ai-summary-count">0</span>
+          </div>
+          <div class="ai-summary-item">
+            <span class="ai-summary-label">Types relevés</span>
+            <span class="ai-summary-value" id="ai-summary-types">—</span>
+          </div>
+        </div>
+        <label class="ai-field">Clé API personnelle
+          <div class="ai-input-row">
+            <input type="password" id="ai-api-key" placeholder="Ex : sk-... ou AIza-...">
+            <button type="button" class="ai-btn outline" id="ai-save-key-btn">Enregistrer</button>
+            <button type="button" class="ai-btn danger" id="ai-delete-key-btn">Supprimer</button>
+          </div>
+        </label>
+        <div class="ai-status" id="ai-key-status"></div>
+        <label class="ai-field">Notes / contexte (optionnel)
+          <textarea id="ai-session-notes" placeholder="Objectifs, météo, faits marquants..."></textarea>
+        </label>
+        <div class="ai-action-grid">
+          <button type="button" class="ai-btn primary" id="ai-action-bilan">Bilan de la séance</button>
+          <button type="button" class="ai-btn outline" id="ai-action-difficulte">Élèves en difficulté</button>
+          <button type="button" class="ai-btn outline" id="ai-action-points">Points forts</button>
+          <button type="button" class="ai-btn outline" id="ai-action-suivi">Préparer la séance suivante</button>
+        </div>
+        <div class="ai-status" id="ai-run-status"></div>
+        <div class="ai-question">
+          <label class="ai-field">Poser une question sur la séance
+            <textarea id="ai-question-input" placeholder="Ex : Quels élèves sont les plus en difficulté ?"></textarea>
+          </label>
+          <div class="ai-question-suggestions">
+            <span>Idées :</span>
+            <button type="button" class="ai-question-suggestion" data-question="Quels élèves sont en difficulté ?">Élèves en difficulté</button>
+            <button type="button" class="ai-question-suggestion" data-question="Quel exercice pose problème ?">Exercice qui pose problème</button>
+            <button type="button" class="ai-question-suggestion" data-question="Qui progresse le plus ?">Qui progresse ?</button>
+            <button type="button" class="ai-question-suggestion" data-question="Comment adapter la séance suivante ?">Adapter la séance suivante</button>
+          </div>
+          <div class="ai-question-actions">
+            <button type="button" class="ai-btn outline" id="ai-question-btn">Poser la question</button>
+          </div>
+          <div class="ai-status" id="ai-question-status"></div>
+        </div>
+      </section>
+
+      <!-- Exports / impression -->
+      <div class="actions">
+        <input id="csv-input" type="file" accept=".csv" style="display:none" onchange="importerCSV(event)">
+      </div>
+
+      <!-- Tableau -->
+      <div class="table-wrapper">
+        <table id="participants-table">
+          <thead id="table-head">
+            <tr>
+              <th>nom</th><th>prenom</th><th>classe</th><th>sexe</th>
+              <th>distance</th><th>vitesse</th><th>vma</th>
+            </tr>
+          </thead>
+          <tbody id="participants-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Post-it : info appui long -->
+      <div class="actions" style="margin-top:8px;">
+        <div class="memo-suppr" role="note">📝 Retirer une ligne : appui long sur la ligne</div>
+        <div class="memo-suppr" role="note">✏️ Mode édition actif : toucher un champ pour écrire (bouton violet ✏️ pour verrouiller / déverrouiller)</div>
+      </div>
+
+      <div class="menu-dropdowns">
+        <details class="menu-group" open>
+          <summary>✏️ Options d’écriture</summary>
+          <div class="menu-options">
+            <button type="button" class="button" onclick="ajouterColonneManuelle()">➕ Ajouter une colonne</button>
+            <button type="button" class="button" onclick="supprimerColonneManuelle()">➖ Supprimer une colonne</button>
+            <button type="button" class="button orange" onclick="ajouterParticipantInline()">➕ Ajouter un élève</button>
+            <button id="edit-mode-btn" class="button purple" type="button" onclick="toggleEditMode()">✏️ Mode édition actif</button>
+          </div>
+        </details>
+        <details class="menu-group">
+          <summary>📁 Options d’archivage</summary>
+          <div class="menu-options">
+            <button type="button" class="button teal" onclick="ouvrirArchivageClasse()">💾 Archiver dans mes classes</button>
+            <button class="button" onclick="exporterCSV()">📥 Exporter CSV</button>
+            <button class="button" onclick="document.getElementById('csv-input').click()">📤 Réimporter CSV</button>
+            <button class="button" onclick="imprimerTableau()">🖨️ Imprimer / PDF</button>
+          </div>
+        </details>
+      </div>
+
+      <div class="nav-row">
+        <a href="index.html" class="button green">🏠 Accueil</a>
+        <a href="scanner.html" class="button blue">📷 Scanner des QR Codes</a>
+        <a href="classes.html" class="button teal">🗂 Classes & séances</a>
+        <a href="classes.html#new-class-section" class="button yellow">➕ Créer une classe</a>
+        <a href="aide.html" class="button purple">❓ Aide</a>
+        <a href="groupe-zenos.html" class="button yellow">🧬 Groupes ZENOS Tour</a>
+      </div>
+    </main>
+
+    <footer>
+      ScanProf - Équipe EPS Lycée Vauban - LUXEMBOURG - JB
+    </footer>
+  </div>
+
+  <div class="ai-modal sp-hidden" id="ai-modal">
+    <div class="ai-modal__card" role="dialog" aria-modal="true">
+      <div class="ai-modal__header">
+        <div>
+          <strong id="ai-modal-title">Assistant IA</strong>
+          <div id="ai-modal-subtitle" style="font-size:0.9rem;color:var(--sp-muted);"></div>
+        </div>
+        <button type="button" class="ai-modal__close" id="ai-modal-close">✖</button>
+      </div>
+      <div class="ai-modal__body" id="ai-modal-body">
+        <div class="ai-modal__loading" id="ai-modal-loading" aria-live="polite">
+          <span>Analyse en cours...</span>
+        </div>
+        <div id="ai-modal-content" class="sp-hidden"></div>
+      </div>
+      <div class="ai-modal__footer">
+        <button type="button" class="button" id="ai-copy-report-btn">📋 Copier le bilan</button>
+        <button type="button" class="button" id="ai-download-report-btn">💾 Télécharger (.txt)</button>
+        <button type="button" class="button red" id="ai-modal-dismiss">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Migration unique : convertit les clés MAJ -> minuscules (base fields) -->
+  <script>
+  (function migrateCaseOnce(){
+    if (localStorage.getItem('eleves_case_migrated') === '1') return;
+
+    function load(){ try{ return JSON.parse(localStorage.getItem('eleves'))||[]; }catch{ return []; } }
+    function save(x){ localStorage.setItem('eleves', JSON.stringify(x)); }
+
+    const pairs = [
+      ['Nom','nom'],['Prénom','prenom'],['Prenom','prenom'],
+      ['Classe','classe'],['Sexe','sexe'],
+      ['Distance','distance'],['Vitesse','vitesse'],['VMA','vma']
+    ];
+
+    let arr = load(), changed = false;
+    arr.forEach(e=>{
+      if(!e) return;
+      pairs.forEach(([from,to])=>{
+        if (e[from] !== undefined) {
+          if (e[to] === undefined) e[to] = e[from];
+          delete e[from];
+          changed = true;
+        }
+      });
+    });
+    if (changed) save(arr);
+
+    localStorage.setItem('eleves_case_migrated','1');
+    if (changed) location.reload();
+  })();
+  </script>
+</body>
+</html>
