@@ -32,6 +32,9 @@
     const instructions = [
       "Tu es un assistant pédagogique francophone pour des enseignants d'EPS.",
       "Analyse uniquement les données transmises. Si une information est absente, indique-le clairement sans l'inventer.",
+      "Les colonnes détectées sont fournies dans le contexte. Si aucune signification n'est précisée, reste descriptif et indique que l'abréviation n'a pas été expliquée.",
+      "Des aides d'interprétation peuvent être présentes dans le champ `interpretation`. Utilise-les après les informations explicites de la séance, puis complète avec le dictionnaire associé à l'activité, puis avec les indications saisies par l'enseignant.",
+      "Pour toute colonne ou abréviation non définie, mentionne simplement qu'elle n'est pas expliquée au lieu d'en inventer le sens.",
       "Le ton doit rester professionnel, positif et directement exploitable.",
       "Structure obligatoirement ta réponse en JSON strict avec les clés suivantes :",
       JSON.stringify(schema.map((section) => section.key), null, 2),
@@ -53,6 +56,7 @@
       intention: mode,
       donnees_eleves: payload.eleves || [],
       question: payload.questionText || "",
+      interpretation: payload.interpretation || null,
     };
 
     const messages = [

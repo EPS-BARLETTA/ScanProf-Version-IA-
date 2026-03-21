@@ -56,6 +56,8 @@
     .ai-field input,
     .ai-field textarea{padding:8px 10px;border-radius:10px;border:1px solid var(--sp-border);background:var(--sp-table-even);color:var(--sp-text);}
     .ai-field textarea{min-height:80px;resize:vertical;}
+    .ai-interpretation summary{cursor:pointer;font-weight:600;}
+    .ai-interpretation textarea{min-height:70px;font-size:0.85rem;}
     .ai-input-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
     .ai-btn{border-radius:10px;padding:9px 16px;font-size:0.92rem;cursor:pointer;border:1px solid transparent;background:var(--sp-table-even);color:var(--sp-text);}
     .ai-btn.primary{background:var(--sp-primary);color:#fff;border-color:var(--sp-primary);}
@@ -86,6 +88,7 @@
   <script src="theme.js" defer></script>
   <script src="classes-store.js" defer></script>
   <script src="participants.js" defer></script>
+  <script src="ai-dictionaries.js" defer></script>
   <script src="ai-prompt.js" defer></script>
   <script src="ai-assistant.js" defer></script>
 </head>
@@ -205,6 +208,11 @@
       <label class="ai-field">Notes / contexte (optionnel)
         <textarea id="ai-session-notes" placeholder="Objectifs, météo, faits marquants..."></textarea>
       </label>
+      <details class="ai-field ai-interpretation">
+        <summary>🛈 Abréviations / consignes de lecture (optionnel)</summary>
+        <textarea id="ai-interpretation-notes" placeholder="Ex : bu = burpees ; cr = crunch ; V = voie ; P = pénalité"></textarea>
+        <p class="ai-panel__note">Ces indications restent sur cet appareil et aident ponctuellement l’IA.</p>
+      </details>
       <div class="ai-actions-grid">
         <button type="button" class="ai-btn primary" id="ai-action-bilan">Bilan de la séance</button>
         <button type="button" class="ai-btn outline" id="ai-action-difficulte">Élèves en difficulté</button>

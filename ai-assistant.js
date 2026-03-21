@@ -4,6 +4,7 @@
     MODEL: "scanprof_ai_model",
     NOTES: "scanprof_ai_notes",
     PROVIDER: "scanprof_ai_provider",
+    INTERPRETATION: "scanprof_ai_interpretation_hints",
   };
   const AI_CONTEXT_KEY = "scanprof_ai_context";
   const PROVIDERS = {
@@ -176,6 +177,45 @@
     return err;
   }
 
+  function getActivityDictionary(activityName = "") {
+    const api = window.ScanProfAIDictionaries;
+    if (!api || typeof api.getDictionaryForActivity !== "function") return null;
+    return api.getDictionaryForActivity(activityName);
+  }
+
+  function buildInterpretationSupport({ columns = [], activityName = "", manualText = "", dictionary = null }) {
+    const cleanColumns = (columns || []).map((col) => (col == null ? "" : String(col))).filter(Boolean);
+    const trimmedManual = (manualText || "").trim();
+    const guides = [];
+    if (cleanColumns.length) {
+      guides.push(`Colonnes détectées : ${cleanColumns.join(", ")}`);
+    }
+    if (dictionary && dictionary.columns) {
+      const entries = Object.entries(dictionary.columns)
+        .map(([key, desc]) => `${key} : ${desc}`)
+        .slice(0, 12);
+      if (entries.length) {
+        const label = dictionary.label || dictionary.key || "Activité";
+        guides.push(`Dictionnaire ${label} :\n${entries.join("\n")}`);
+      }
+      if (dictionary.notes && dictionary.notes.length) {
+        guides.push(`Repères activité : ${dictionary.notes.join(" ")}`);
+      }
+    }
+    if (trimmedManual) {
+      guides.push(`Indications de l'enseignant :\n${trimmedManual}`);
+    }
+    return {
+      activityName,
+      columns: cleanColumns,
+      dictionary: dictionary
+        ? { key: dictionary.key, label: dictionary.label || "", columns: dictionary.columns || {}, notes: dictionary.notes || [] }
+        : null,
+      manual: trimmedManual,
+      guides,
+    };
+  }
+
   function initAssistant() {
     refs = {
       openBtn: document.getElementById("ai-open-btn"),
@@ -187,6 +227,7 @@
       deleteBtn: document.getElementById("ai-delete-key-btn"),
       testBtn: document.getElementById("ai-test-key-btn"),
       notesField: document.getElementById("ai-session-notes"),
+      interpretationField: document.getElementById("ai-interpretation-notes"),
       keyStatus: document.getElementById("ai-key-status"),
       runStatus: document.getElementById("ai-run-status"),
       questionInput: document.getElementById("ai-question-input"),
@@ -232,6 +273,7 @@
     refs.actionButtons?.suivi?.addEventListener("click", () => handleAnalysis("suivi"));
     refs.questionBtn?.addEventListener("click", handleQuestion);
     refs.notesField?.addEventListener("input", handleNotesChange);
+    refs.interpretationField?.addEventListener("input", handleInterpretationChange);
     refs.apiKeyInput?.addEventListener("change", handleKeyInputChange);
     refs.openBtn?.addEventListener("click", () => toggleDrawer(true));
     refs.drawerClose?.addEventListener("click", () => toggleDrawer(false));
@@ -268,6 +310,8 @@
       if (storedKey && refs.apiKeyInput) refs.apiKeyInput.value = storedKey;
       const storedNotes = localStorage.getItem(STORAGE.NOTES) || "";
       if (refs.notesField) refs.notesField.value = storedNotes;
+      const storedInterpretation = localStorage.getItem(STORAGE.INTERPRETATION) || "";
+      if (refs.interpretationField) refs.interpretationField.value = storedInterpretation;
       if (storedKey) {
         setStatus(refs.keyStatus, "Clé chargée.", "success");
       }
@@ -303,6 +347,14 @@
   function handleNotesChange(event) {
     try {
       localStorage.setItem(STORAGE.NOTES, event.target.value || "");
+    } catch {
+      /* noop */
+    }
+  }
+
+  function handleInterpretationChange(event) {
+    try {
+      localStorage.setItem(STORAGE.INTERPRETATION, event.target.value || "");
     } catch {
       /* noop */
     }
@@ -390,6 +442,7 @@
       const notes = refs.notesField?.value || "";
       const storedContext = getStoredAIContext();
       const summary = summarizeDataset();
+      const manualInterpretation = refs.interpretationField?.value || localStorage.getItem(STORAGE.INTERPRETATION) || "";
       currentContext = {
         ...(summary.meta || {}),
         className:
@@ -405,6 +458,13 @@
         updatedAt:
           (summary.meta && (summary.meta.updatedAt || summary.meta.savedAt)) || new Date().toISOString(),
       };
+      const activityDictionary = getActivityDictionary(currentContext.activityName || storedContext.activite || "");
+      const interpretationSupport = buildInterpretationSupport({
+        columns: summary.columns || [],
+        activityName: currentContext.activityName || "",
+        manualText: manualInterpretation,
+        dictionary: activityDictionary,
+      });
       lastQuestionText = intent === "question" ? (questionText || "").trim() : "";
       const sliced = dataset.slice(0, MAX_ELEVES).map(cleanEntry);
       const analysisInput = {
@@ -416,11 +476,13 @@
           providerKey,
           intent,
           lastQuestionText,
-          storedContext
+          storedContext,
+          interpretationSupport
         ),
         eleves: sliced,
         intent,
         questionText: lastQuestionText,
+        interpretation: interpretationSupport,
       };
       const builder = window.ScanProfAIPrompt;
       if (!builder || typeof builder.buildPrompt !== "function") {
@@ -449,7 +511,17 @@
     }
   }
 
-  function buildContext(summary, notes, totalEntries, usedEntries, providerKey, intent, questionText, storedContext) {
+  function buildContext(
+    summary,
+    notes,
+    totalEntries,
+    usedEntries,
+    providerKey,
+    intent,
+    questionText,
+    storedContext,
+    interpretationSupport
+  ) {
     const meta = summary.meta || {};
     const bestClass = meta?.className || summary.classes?.[0]?.name || "";
     const info = {
@@ -470,6 +542,9 @@
     if (providerLabel) info.fournisseur = providerLabel;
     if (intent) info.intent = intent;
     if (questionText) info.question_utilisateur = questionText;
+    if (interpretationSupport?.guides?.length) info.aide_interpretation = interpretationSupport.guides;
+    if (interpretationSupport?.dictionary) info.dictionnaire_activite = interpretationSupport.dictionary;
+    if (interpretationSupport?.manual) info.indications_enseignant_interpretation = interpretationSupport.manual;
     if (totalEntries > usedEntries) {
       info.tronque = `Seuls ${usedEntries} élèves sur ${totalEntries} ont été envoyés pour limiter la taille du prompt.`;
     }
