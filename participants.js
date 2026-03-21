@@ -968,7 +968,7 @@ function ouvrirArchivageClasse() {
     activity.sessions.unshift(session);
     storeApi.saveClasses(classes);
     overlay.remove();
-    alert("Séance archivée dans vos classes.");
+    handlePostArchiveReset();
   });
 }
 
@@ -1364,4 +1364,11 @@ function escapeHtml(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+function handlePostArchiveReset() {
+  try { localStorage.removeItem(LS_ELEVES_KEY); } catch { /* noop */ }
+  _elevesBrut = [];
+  _vueCourante = [];
+  updateTable([]);
+  alert("Séance enregistrée ✔️ — tableau réinitialisé");
 }

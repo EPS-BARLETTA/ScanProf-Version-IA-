@@ -5,6 +5,7 @@
     NOTES: "scanprof_ai_notes",
     PROVIDER: "scanprof_ai_provider",
   };
+  const AI_CONTEXT_KEY = "scanprof_ai_context";
   const PROVIDERS = {
     openai: {
       label: "OpenAI",
@@ -47,7 +48,10 @@
 
   function initAssistant() {
     refs = {
-      panel: document.getElementById("ai-panel"),
+      openBtn: document.getElementById("ai-open-btn"),
+      drawerBackdrop: document.getElementById("ai-drawer"),
+      drawerPanel: document.querySelector("#ai-drawer .ai-drawer"),
+      drawerClose: document.getElementById("ai-drawer-close"),
       apiKeyInput: document.getElementById("ai-api-key"),
       saveBtn: document.getElementById("ai-save-key-btn"),
       deleteBtn: document.getElementById("ai-delete-key-btn"),
@@ -79,7 +83,7 @@
       copyBtn: document.getElementById("ai-copy-report-btn"),
       downloadBtn: document.getElementById("ai-download-report-btn"),
     };
-    if (!refs.panel) return;
+    if (!refs.drawerPanel) return;
 
     loadStoredSettings();
     bindEvents();
@@ -99,6 +103,11 @@
     refs.questionBtn?.addEventListener("click", handleQuestion);
     refs.notesField?.addEventListener("input", handleNotesChange);
     refs.apiKeyInput?.addEventListener("change", handleKeyInputChange);
+    refs.openBtn?.addEventListener("click", () => toggleDrawer(true));
+    refs.drawerClose?.addEventListener("click", () => toggleDrawer(false));
+    refs.drawerBackdrop?.addEventListener("click", (event) => {
+      if (event.target === refs.drawerBackdrop) toggleDrawer(false);
+    });
     refs.questionSuggestions?.forEach((btn) => {
       btn.addEventListener("click", () => {
         const text = btn.getAttribute("data-question") || "";
@@ -248,17 +257,20 @@
 
     try {
       const notes = refs.notesField?.value || "";
+      const storedContext = getStoredAIContext();
       const summary = summarizeDataset();
       currentContext = {
         ...(summary.meta || {}),
         className:
+          storedContext.classe ||
           (summary.meta && summary.meta.className) ||
           (summary.classes && summary.classes[0] && summary.classes[0].name) ||
           "",
-        activityName: (summary.meta && summary.meta.activityName) || "",
-        sessionName: (summary.meta && summary.meta.sessionName) || "",
+        activityName: storedContext.activite || (summary.meta && summary.meta.activityName) || "",
+        sessionName: storedContext.seance || (summary.meta && summary.meta.sessionName) || "",
         providerLabel,
         intent,
+        storedContext,
         updatedAt:
           (summary.meta && (summary.meta.updatedAt || summary.meta.savedAt)) || new Date().toISOString(),
       };
@@ -272,7 +284,8 @@
           sliced.length,
           providerKey,
           intent,
-          lastQuestionText
+          lastQuestionText,
+          storedContext
         ),
         eleves: sliced,
         intent,
@@ -302,7 +315,7 @@
     }
   }
 
-  function buildContext(summary, notes, totalEntries, usedEntries, providerKey, intent, questionText) {
+  function buildContext(summary, notes, totalEntries, usedEntries, providerKey, intent, questionText, storedContext) {
     const meta = summary.meta || {};
     const bestClass = meta?.className || summary.classes?.[0]?.name || "";
     const info = {
@@ -311,12 +324,14 @@
       nb_eleves_transmis: usedEntries,
       colonnes: summary.columns || [],
       repartition_classes: summary.classes || [],
-      classe: bestClass,
-      activite: meta?.activityName || "",
-      seance: meta?.sessionName || "",
+      classe: storedContext?.classe || bestClass,
+      activite: storedContext?.activite || meta?.activityName || "",
+      seance: storedContext?.seance || meta?.sessionName || "",
       notes_enseignant: notes || "",
+      contexte_supplementaire: storedContext || {},
     };
     if (meta?.updatedAt) info.session_mise_a_jour = meta.updatedAt;
+    if (storedContext?.date) info.date_seance = storedContext.date;
     const providerLabel = PROVIDERS[providerKey]?.label;
     if (providerLabel) info.fournisseur = providerLabel;
     if (intent) info.intent = intent;
@@ -508,8 +523,18 @@
   }
 
   function setPanelBusy(isBusy) {
-    if (!refs.panel) return;
-    refs.panel.classList.toggle("ai-panel--busy", !!isBusy);
+    if (!refs.drawerPanel) return;
+    refs.drawerPanel.classList.toggle("ai-panel--busy", !!isBusy);
+  }
+
+  function toggleDrawer(open) {
+    if (!refs.drawerBackdrop) return;
+    if (open) {
+      refs.drawerBackdrop.classList.remove("sp-hidden");
+      if (refs.openBtn) refs.openBtn.blur();
+    } else {
+      refs.drawerBackdrop.classList.add("sp-hidden");
+    }
   }
 
   function summarizeDataset() {
@@ -529,12 +554,22 @@
   function updateSummaryUI() {
     if (!refs.summaryClass || !refs.summaryCount || !refs.summaryTypes) return;
     const summary = summarizeDataset();
+    const storedContext = getStoredAIContext();
     const meta = summary.meta || {};
-    const prominentClass = meta.className || (summary.classes && summary.classes[0] && summary.classes[0].name) || "Non renseignée";
+    const prominentClass =
+      storedContext.classe ||
+      meta.className ||
+      (summary.classes && summary.classes[0] && summary.classes[0].name) ||
+      "Non renseignée";
     refs.summaryClass.textContent = prominentClass || "Non renseignée";
     refs.summaryCount.textContent = summary.total || 0;
     const inferredTypes = inferTypeLabels(summary.columns || []);
     refs.summaryTypes.textContent = inferredTypes.length ? inferredTypes.join(", ") : "Mesures standards";
+    if (refs.openBtn) {
+      const hasData = summary.total > 0;
+      refs.openBtn.disabled = !hasData;
+      refs.openBtn.title = hasData ? "" : "Ajoutez des élèves pour utiliser l’analyse IA";
+    }
   }
 
   function inferTypeLabels(columns = []) {
@@ -554,6 +589,17 @@
     const api = window.ScanProfParticipants;
     if (!api || typeof api.getCurrentDataset !== "function") return [];
     return api.getCurrentDataset() || [];
+  }
+
+  function getStoredAIContext() {
+    try {
+      const raw = localStorage.getItem(AI_CONTEXT_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
   }
 
   function getSelectedProviderKey() {

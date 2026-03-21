@@ -2,6 +2,7 @@
   const store = window.ScanProfClassesStore;
   if (!store) return;
   const SESSION_META_KEY = "scanprof_current_session_meta";
+  const AI_CONTEXT_KEY = "scanprof_ai_context";
 
   let classes = [];
   let cls = null;
@@ -286,7 +287,20 @@
       updatedAt: session.updatedAt,
       savedAt: new Date().toISOString(),
     };
-    try { localStorage.setItem(SESSION_META_KEY, JSON.stringify(meta)); } catch { /* noop */ }
+    try {
+      localStorage.setItem(SESSION_META_KEY, JSON.stringify(meta));
+      localStorage.setItem(
+        AI_CONTEXT_KEY,
+        JSON.stringify({
+          classe: cls?.name || "",
+          activite: activity?.name || "",
+          seance: session.name || "",
+          date: session.createdAt || new Date().toISOString(),
+        })
+      );
+    } catch {
+      /* noop */
+    }
   }
 
   function clearSessionMeta() {

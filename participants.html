@@ -38,32 +38,35 @@
       font-size:.95rem; border:1px solid var(--sp-memo-border); background:var(--sp-memo-bg); border-radius:8px;
     }
 
-    .ai-panel{margin-top:20px;border:1px solid var(--sp-border);border-radius:16px;padding:20px;background:var(--sp-surface);box-shadow:var(--sp-card-shadow);display:flex;flex-direction:column;gap:16px;transition:box-shadow .2s ease,opacity .2s ease;}
-    .ai-panel.ai-panel--busy{opacity:0.75;}
-    .ai-panel__head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
-    .ai-panel__head h2{margin:0;font-size:1.2rem;}
-    .ai-panel__note{margin:4px 0 0;font-size:0.9rem;color:var(--sp-muted);}
-    .ai-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;padding:12px;border-radius:14px;background:var(--sp-table-odd);}
+    .ai-trigger{margin-left:auto;background:transparent;border:1px solid var(--sp-border);border-radius:999px;padding:6px 14px;font-size:0.9rem;cursor:pointer;}
+    .ai-panel__note{font-size:0.85rem;color:var(--sp-muted);}
+    .ai-panel--busy{opacity:0.65;pointer-events:none;}
+    .ai-trigger[disabled]{opacity:0.4;cursor:not-allowed;}
+    .ai-drawer-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.3);backdrop-filter:blur(2px);display:flex;justify-content:flex-end;z-index:8000;transition:opacity .2s ease;}
+    .ai-drawer-backdrop.sp-hidden{display:none;}
+    .ai-drawer{width:min(360px,90vw);height:100%;background:var(--sp-surface);box-shadow:-18px 0 36px rgba(0,0,0,.25);display:flex;flex-direction:column;gap:14px;padding:18px;overflow-y:auto;}
+    .ai-drawer__head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+    .ai-drawer__head h2{margin:0;font-size:1.15rem;}
+    .ai-drawer__close{border:none;background:none;font-size:1.3rem;cursor:pointer;}
+    .ai-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;padding:10px;border-radius:12px;background:var(--sp-table-odd);}
     .ai-summary-item{display:flex;flex-direction:column;gap:2px;}
-    .ai-summary-label{font-size:0.8rem;color:var(--sp-muted);}
-    .ai-summary-value{font-size:1rem;font-weight:600;}
+    .ai-summary-label{font-size:0.75rem;color:var(--sp-muted);}
+    .ai-summary-value{font-size:0.95rem;font-weight:600;}
     .ai-field{display:flex;flex-direction:column;gap:6px;font-size:0.9rem;}
     .ai-field input,
-    .ai-field textarea{padding:9px 12px;border-radius:10px;border:1px solid var(--sp-border);background:var(--sp-table-even);color:var(--sp-text);font-size:0.95rem;}
-    .ai-field textarea{min-height:90px;resize:vertical;}
+    .ai-field textarea{padding:8px 10px;border-radius:10px;border:1px solid var(--sp-border);background:var(--sp-table-even);color:var(--sp-text);}
+    .ai-field textarea{min-height:80px;resize:vertical;}
     .ai-input-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
-    .ai-action-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;}
-    .ai-btn{border-radius:12px;padding:10px 18px;font-size:0.95rem;cursor:pointer;border:1px solid transparent;background:var(--sp-table-even);color:var(--sp-text);transition:background .2s ease,transform .2s ease;}
-    .ai-btn.primary{background:var(--sp-primary);color:#fff;border-color:var(--sp-primary);font-weight:600;}
+    .ai-btn{border-radius:10px;padding:9px 16px;font-size:0.92rem;cursor:pointer;border:1px solid transparent;background:var(--sp-table-even);color:var(--sp-text);}
+    .ai-btn.primary{background:var(--sp-primary);color:#fff;border-color:var(--sp-primary);}
     .ai-btn.outline{background:transparent;border-color:var(--sp-border);}
     .ai-btn.danger{border-color:var(--sp-accent-red,#c00);color:var(--sp-accent-red,#c00);background:transparent;}
     .ai-btn.text{background:none;border:none;color:var(--sp-muted);padding:0;text-decoration:underline;}
-    .ai-btn:hover{transform:translateY(-1px);}
-    .ai-status{min-height:1.1em;font-size:0.9rem;color:var(--sp-muted);}
-    .ai-question{border-top:1px solid var(--sp-border);padding-top:14px;display:flex;flex-direction:column;gap:10px;}
-    .ai-question-actions{display:flex;justify-content:flex-start;}
-    .ai-question-suggestions{display:flex;flex-wrap:wrap;gap:8px;font-size:0.85rem;color:var(--sp-muted);}
-    .ai-question-suggestions button{border:none;background:var(--sp-table-even);border-radius:999px;padding:6px 12px;font-size:0.85rem;cursor:pointer;}
+    .ai-actions-grid{display:grid;grid-template-columns:1fr;gap:10px;}
+    .ai-status{min-height:1.1em;font-size:0.85rem;color:var(--sp-muted);}
+    .ai-question{border-top:1px solid var(--sp-border);padding-top:12px;display:flex;flex-direction:column;gap:8px;}
+    .ai-question-suggestions{display:flex;flex-wrap:wrap;gap:6px;font-size:0.8rem;}
+    .ai-question-suggestions button{border:none;background:var(--sp-table-even);border-radius:999px;padding:5px 10px;font-size:0.8rem;cursor:pointer;}
     .ai-result-icon{margin-right:8px;font-size:1.2rem;}
 
     .ai-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9000;padding:16px;}
@@ -97,6 +100,7 @@
         <select id="tri-select"></select>
         <button class="button blue" onclick="trierParticipants()">🔃 Trier</button>
         <button class="button red" onclick="resetData()">♻️ Réinitialiser</button>
+        <button type="button" class="ai-trigger" id="ai-open-btn">🤖 IA</button>
       </div>
 
       <!-- Filtre texte -->
@@ -105,65 +109,6 @@
         <input id="filtre-txt" type="text" placeholder="ex. Lola, 5A, F..." oninput="filtrerTexte()">
         <button class="button" onclick="filtrerTexte()">🔎 Rechercher</button>
       </div>
-
-      <!-- Assistant IA -->
-      <section class="ai-panel" id="ai-panel">
-        <div class="ai-panel__head">
-          <div>
-            <h2>Assistant IA</h2>
-            <p class="ai-panel__note">La clé reste stockée localement sur cet appareil.</p>
-          </div>
-          <button type="button" class="ai-btn text" id="ai-test-key-btn">Tester la connexion</button>
-        </div>
-        <div class="ai-summary">
-          <div class="ai-summary-item">
-            <span class="ai-summary-label">Classe</span>
-            <span class="ai-summary-value" id="ai-summary-class">—</span>
-          </div>
-          <div class="ai-summary-item">
-            <span class="ai-summary-label">Élèves</span>
-            <span class="ai-summary-value" id="ai-summary-count">0</span>
-          </div>
-          <div class="ai-summary-item">
-            <span class="ai-summary-label">Types relevés</span>
-            <span class="ai-summary-value" id="ai-summary-types">—</span>
-          </div>
-        </div>
-        <label class="ai-field">Clé API personnelle
-          <div class="ai-input-row">
-            <input type="password" id="ai-api-key" placeholder="Ex : sk-... ou AIza-...">
-            <button type="button" class="ai-btn outline" id="ai-save-key-btn">Enregistrer</button>
-            <button type="button" class="ai-btn danger" id="ai-delete-key-btn">Supprimer</button>
-          </div>
-        </label>
-        <div class="ai-status" id="ai-key-status"></div>
-        <label class="ai-field">Notes / contexte (optionnel)
-          <textarea id="ai-session-notes" placeholder="Objectifs, météo, faits marquants..."></textarea>
-        </label>
-        <div class="ai-action-grid">
-          <button type="button" class="ai-btn primary" id="ai-action-bilan">Bilan de la séance</button>
-          <button type="button" class="ai-btn outline" id="ai-action-difficulte">Élèves en difficulté</button>
-          <button type="button" class="ai-btn outline" id="ai-action-points">Points forts</button>
-          <button type="button" class="ai-btn outline" id="ai-action-suivi">Préparer la séance suivante</button>
-        </div>
-        <div class="ai-status" id="ai-run-status"></div>
-        <div class="ai-question">
-          <label class="ai-field">Poser une question sur la séance
-            <textarea id="ai-question-input" placeholder="Ex : Quels élèves sont les plus en difficulté ?"></textarea>
-          </label>
-          <div class="ai-question-suggestions">
-            <span>Idées :</span>
-            <button type="button" class="ai-question-suggestion" data-question="Quels élèves sont en difficulté ?">Élèves en difficulté</button>
-            <button type="button" class="ai-question-suggestion" data-question="Quel exercice pose problème ?">Exercice qui pose problème</button>
-            <button type="button" class="ai-question-suggestion" data-question="Qui progresse le plus ?">Qui progresse ?</button>
-            <button type="button" class="ai-question-suggestion" data-question="Comment adapter la séance suivante ?">Adapter la séance suivante</button>
-          </div>
-          <div class="ai-question-actions">
-            <button type="button" class="ai-btn outline" id="ai-question-btn">Poser la question</button>
-          </div>
-          <div class="ai-status" id="ai-question-status"></div>
-        </div>
-      </section>
 
       <!-- Exports / impression -->
       <div class="actions">
@@ -223,6 +168,67 @@
     <footer>
       ScanProf - Équipe EPS Lycée Vauban - LUXEMBOURG - JB
     </footer>
+  </div>
+
+  <div class="ai-drawer-backdrop sp-hidden" id="ai-drawer">
+    <aside class="ai-drawer">
+      <div class="ai-drawer__head">
+        <div>
+          <h2>Assistant IA</h2>
+          <p class="ai-panel__note" style="margin:2px 0 0;font-size:0.85rem;color:var(--sp-muted);">Analyse vos données actuelles. Clé stockée localement.</p>
+        </div>
+        <button type="button" class="ai-drawer__close" id="ai-drawer-close">✖</button>
+      </div>
+      <button type="button" class="ai-btn text" id="ai-test-key-btn">Tester la connexion</button>
+      <div class="ai-summary">
+        <div class="ai-summary-item">
+          <span class="ai-summary-label">Classe</span>
+          <span class="ai-summary-value" id="ai-summary-class">—</span>
+        </div>
+        <div class="ai-summary-item">
+          <span class="ai-summary-label">Élèves</span>
+          <span class="ai-summary-value" id="ai-summary-count">0</span>
+        </div>
+        <div class="ai-summary-item">
+          <span class="ai-summary-label">Types relevés</span>
+          <span class="ai-summary-value" id="ai-summary-types">—</span>
+        </div>
+      </div>
+      <label class="ai-field">Clé API personnelle
+        <div class="ai-input-row">
+          <input type="password" id="ai-api-key" placeholder="Ex : sk-... ou AIza-...">
+          <button type="button" class="ai-btn outline" id="ai-save-key-btn">Enregistrer</button>
+          <button type="button" class="ai-btn danger" id="ai-delete-key-btn">Supprimer</button>
+        </div>
+      </label>
+      <div class="ai-status" id="ai-key-status"></div>
+      <label class="ai-field">Notes / contexte (optionnel)
+        <textarea id="ai-session-notes" placeholder="Objectifs, météo, faits marquants..."></textarea>
+      </label>
+      <div class="ai-actions-grid">
+        <button type="button" class="ai-btn primary" id="ai-action-bilan">Bilan de la séance</button>
+        <button type="button" class="ai-btn outline" id="ai-action-difficulte">Élèves en difficulté</button>
+        <button type="button" class="ai-btn outline" id="ai-action-points">Points forts</button>
+        <button type="button" class="ai-btn outline" id="ai-action-suivi">Préparer la séance suivante</button>
+      </div>
+      <div class="ai-status" id="ai-run-status"></div>
+      <div class="ai-question">
+        <label class="ai-field">Poser une question sur la séance
+          <textarea id="ai-question-input" placeholder="Ex : Quels élèves sont les plus en difficulté ?"></textarea>
+        </label>
+        <div class="ai-question-suggestions">
+          <span>Idées :</span>
+          <button type="button" class="ai-question-suggestion" data-question="Quels élèves sont en difficulté ?">Élèves en difficulté</button>
+          <button type="button" class="ai-question-suggestion" data-question="Quel exercice pose problème ?">Exercice qui pose problème</button>
+          <button type="button" class="ai-question-suggestion" data-question="Qui progresse le plus ?">Qui progresse ?</button>
+          <button type="button" class="ai-question-suggestion" data-question="Comment adapter la séance suivante ?">Adapter la séance suivante</button>
+        </div>
+        <div class="ai-question-actions">
+          <button type="button" class="ai-btn outline" id="ai-question-btn">Poser la question</button>
+        </div>
+        <div class="ai-status" id="ai-question-status"></div>
+      </div>
+    </aside>
   </div>
 
   <div class="ai-modal sp-hidden" id="ai-modal">
