@@ -14,13 +14,20 @@
     },
     gemini: {
       label: "Gemini",
-      defaultModel: "gemini-1.5-flash-latest",
-      models: ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"],
+      defaultModel: "gemini-1.5-flash",
+      models: ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"],
     },
   };
   const DEFAULT_PROVIDER = "openai";
   const API_URL = "https://api.openai.com/v1/chat/completions";
   const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+  const GEMINI_MODEL_FALLBACKS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro", "gemini-pro"];
+  const GEMINI_MODEL_ALIASES = {
+    "gemini-1.5-flash-latest": "gemini-1.5-flash",
+    "gemini-1.5-pro-latest": "gemini-1.5-pro",
+    "gemini-pro-latest": "gemini-pro",
+    "gemini-1.0-pro-latest": "gemini-1.0-pro",
+  };
   const MAX_ELEVES = 150;
   const CORE_COLUMNS = new Set(["nom", "prenom", "classe", "sexe", "distance", "vitesse", "vma", "temps_total"]);
   const SECTION_ICONS = {
@@ -45,6 +52,81 @@
   let lastQuestionText = "";
 
   document.addEventListener("DOMContentLoaded", initAssistant);
+
+  function normalizeModelForProvider(providerKey, modelName) {
+    if (!modelName) return null;
+    const raw = String(modelName).trim();
+    if (!raw) return null;
+    if (providerKey === "gemini") {
+      let normalized = raw.replace(/^models\//i, "");
+      const lower = normalized.toLowerCase();
+      const alias = GEMINI_MODEL_ALIASES[normalized] || GEMINI_MODEL_ALIASES[lower];
+      if (alias) return alias;
+      if (GEMINI_MODEL_FALLBACKS.includes(normalized)) return normalized;
+      if (GEMINI_MODEL_FALLBACKS.includes(lower)) return lower;
+      return lower;
+    }
+    const provider = PROVIDERS[providerKey];
+    if (!provider) return null;
+    if (provider.models.includes(raw)) return raw;
+    const lower = raw.toLowerCase();
+    const match = provider.models.find((entry) => entry.toLowerCase() === lower);
+    return match || null;
+  }
+
+  function getGeminiModelCandidates(preferredModel) {
+    const initial = normalizeModelForProvider("gemini", preferredModel) || PROVIDERS.gemini.defaultModel;
+    const ordered = [initial, ...GEMINI_MODEL_FALLBACKS];
+    const seen = new Set();
+    return ordered
+      .map((entry) => (entry ? String(entry).trim() : ""))
+      .filter((entry) => {
+        if (!entry) return false;
+        const lower = entry.toLowerCase();
+        if (seen.has(lower)) return false;
+        seen.add(lower);
+        return true;
+      });
+  }
+
+  function rememberModelSelection(model, providerKey = currentProvider) {
+    const provider = PROVIDERS[providerKey] || PROVIDERS[DEFAULT_PROVIDER];
+    const normalized = normalizeModelForProvider(providerKey, model) || provider.defaultModel;
+    currentModel = normalized;
+    try {
+      localStorage.setItem(STORAGE.MODEL, normalized);
+    } catch {
+      /* noop */
+    }
+  }
+
+  function detectGeminiModelError(status, message = "") {
+    const lower = (message || "").toLowerCase();
+    if (status === 404) return true;
+    if (status === 403 && lower.includes("model")) return true;
+    if (lower.includes("model") && lower.includes("not found")) return true;
+    return false;
+  }
+
+  function buildGeminiError(message, meta = {}) {
+    const text = message || "Erreur API Gemini.";
+    const err = new Error(text);
+    err.status = meta.status;
+    err.code = meta.code;
+    err.provider = "gemini";
+    err.model = meta.model;
+    err.geminiModelError = meta.forceModelError ?? detectGeminiModelError(meta.status, text);
+    err.logMessage = meta.logMessage || `[Gemini ${meta.model || "?"}] ${text}${meta.status ? ` (HTTP ${meta.status})` : ""}`;
+    return err;
+  }
+
+  function createFriendlyError(message, logMessage) {
+    const err = new Error(message);
+    err.userMessage = message;
+    err.logMessage = logMessage || message;
+    err.provider = "gemini";
+    return err;
+  }
 
   function initAssistant() {
     refs = {
@@ -148,12 +230,10 @@
 
   function setProvider(providerKey, presetModel) {
     const key = PROVIDERS[providerKey] ? providerKey : DEFAULT_PROVIDER;
-    const provider = PROVIDERS[key];
     currentProvider = key;
-    currentModel = provider.models.includes(presetModel) ? presetModel : provider.defaultModel;
+    rememberModelSelection(presetModel, key);
     try {
       localStorage.setItem(STORAGE.PROVIDER, key);
-      localStorage.setItem(STORAGE.MODEL, currentModel);
     } catch {
       /* noop */
     }
@@ -231,7 +311,10 @@
       ], { max_tokens: 16, temperature: 0, intent: "test" });
       setStatus(refs.keyStatus, "Connexion validée ✅", "success");
     } catch (err) {
-      setStatus(refs.keyStatus, `Erreur de connexion : ${err.message}`, "error");
+      if (err?.logMessage) console.error(err.logMessage, err);
+      else console.error(err);
+      const message = err?.userMessage || err?.message || "Erreur de connexion.";
+      setStatus(refs.keyStatus, message, "error");
     }
   }
 
@@ -308,8 +391,11 @@
       setModalLoading(false);
       setPanelBusy(false);
     } catch (err) {
-      setStatus(statusTarget, `Analyse impossible : ${err.message}`, "error");
-      renderFallbackError(err.message);
+      const userMessage = err?.userMessage || err?.message || "Analyse impossible pour le moment.";
+      if (err?.logMessage) console.error(err.logMessage, err);
+      else console.error(err);
+      setStatus(statusTarget, userMessage, "error");
+      renderFallbackError(userMessage);
       setModalLoading(false);
       setPanelBusy(false);
     }
@@ -611,7 +697,8 @@
   }
 
   function getSelectedModel() {
-    return currentModel;
+    const provider = PROVIDERS[currentProvider] || PROVIDERS[DEFAULT_PROVIDER];
+    return normalizeModelForProvider(currentProvider, currentModel) || provider.defaultModel;
   }
 
   function inferProviderFromKey(key = "") {
@@ -673,28 +760,61 @@
 
   async function callGemini(apiKey, model, messages, options = {}) {
     const text = messagesToPlaintext(messages);
-    const body = {
+    const payload = JSON.stringify({
       contents: [{ role: "user", parts: [{ text }] }],
       generationConfig: {
         temperature: options.temperature ?? 0.4,
         maxOutputTokens: options.max_tokens ?? 1024,
       },
-    };
+    });
+    const candidates = getGeminiModelCandidates(model);
+    let lastModelError = null;
+    for (const candidate of candidates) {
+      try {
+        const output = await requestGemini(apiKey, candidate, payload);
+        rememberModelSelection(candidate, "gemini");
+        return output;
+      } catch (err) {
+        if (err?.geminiModelError) {
+          lastModelError = err;
+          console.warn(err.logMessage || err);
+          continue;
+        }
+        throw err;
+      }
+    }
+    if (lastModelError) {
+      console.error(lastModelError.logMessage || lastModelError, lastModelError);
+    }
+    throw createFriendlyError("Le modèle Gemini associé à cette clé n’est pas disponible.", lastModelError?.logMessage);
+  }
+
+  async function requestGemini(apiKey, model, payload) {
     const url = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: payload,
     });
     const json = await resp.json().catch(() => ({}));
     if (!resp.ok) {
       const message = json?.error?.message || "Erreur API Gemini.";
-      throw new Error(message);
+      throw buildGeminiError(message, {
+        status: resp.status,
+        code: json?.error?.code,
+        model,
+      });
     }
     const candidate = json.candidates && json.candidates[0];
     const parts = candidate && candidate.content && candidate.content.parts;
     const output = Array.isArray(parts) ? parts.map((part) => part.text || "").join("\n") : "";
-    if (!output.trim()) throw new Error("Réponse vide de Gemini.");
+    if (!output.trim()) {
+      throw buildGeminiError("Réponse vide de Gemini.", {
+        model,
+        logMessage: `[Gemini ${model}] Réponse vide reçue.`,
+        forceModelError: false,
+      });
+    }
     return output.trim();
   }
 
