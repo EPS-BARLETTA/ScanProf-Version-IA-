@@ -1,0 +1,431 @@
+(function () {
+  const OPEN_EVENT = "scanprof:open-dictionary";
+  const DICTIONARY_EVENT = "scanprof:dictionaries-changed";
+  const AI_CONTEXT_KEY = "scanprof_ai_context";
+  const api = window.ScanProfAIDictionaries;
+  if (!api) return;
+
+  const state = {
+    selectedId: "",
+    editingId: null,
+    idTouched: false,
+    currentActivityName: "",
+  };
+  const refs = {};
+
+  document.addEventListener("DOMContentLoaded", init);
+
+  function init() {
+    refs.openBtn = document.getElementById("ai-dictionary-open-btn");
+    refs.modal = document.getElementById("ai-dictionary-modal");
+    refs.closeBtn = document.getElementById("ai-dictionary-close");
+    refs.body = document.querySelector("#ai-dictionary-modal .ai-dictionary-body");
+    refs.currentContent = document.getElementById("ai-dictionary-current-content");
+    refs.currentAddBtn = document.getElementById("ai-dictionary-add-current-btn");
+    refs.select = document.getElementById("ai-dictionary-select");
+    refs.selectedDetails = document.getElementById("ai-dictionary-selected-details");
+    refs.addBtn = document.getElementById("ai-dictionary-add-btn");
+    refs.editBtn = document.getElementById("ai-dictionary-edit-btn");
+    refs.removeBtn = document.getElementById("ai-dictionary-remove-btn");
+    refs.editorWrapper = document.getElementById("ai-dictionary-editor");
+    refs.form = document.getElementById("ai-dictionary-form");
+    refs.formTitle = document.getElementById("ai-dictionary-editor-title");
+    refs.formName = document.getElementById("dict-app-name");
+    refs.formId = document.getElementById("dict-app-id");
+    refs.formKeywords = document.getElementById("dict-app-keywords");
+    refs.formDescription = document.getElementById("dict-app-description");
+    refs.formAbbr = document.getElementById("dict-app-abbreviations");
+    refs.formSuffixes = document.getElementById("dict-app-suffixes");
+    refs.formLevels = document.getElementById("dict-app-levels");
+    refs.formInterpretation = document.getElementById("dict-app-interpretation");
+    refs.formNotes = document.getElementById("dict-app-notes");
+    refs.formStatus = document.getElementById("dict-form-status");
+    refs.formCancel = document.getElementById("dict-form-cancel");
+    refs.exportBtn = document.getElementById("ai-dictionary-export-btn");
+    refs.importBtn = document.getElementById("ai-dictionary-import-btn");
+    refs.importInput = document.getElementById("ai-dictionary-import-input");
+    refs.feedback = document.getElementById("ai-dictionary-feedback");
+
+    if (!refs.modal) return;
+
+    refs.openBtn?.addEventListener("click", () => openModal());
+    refs.closeBtn?.addEventListener("click", closeModal);
+    refs.modal.addEventListener("click", (event) => {
+      if (event.target === refs.modal) closeModal();
+    });
+    refs.currentAddBtn?.addEventListener("click", handleCurrentAddClick);
+    refs.addBtn?.addEventListener("click", () => startEditor());
+    refs.editBtn?.addEventListener("click", () => startEditor({ dictionaryId: state.selectedId || null }));
+    refs.removeBtn?.addEventListener("click", handleRemoveSelected);
+    refs.select?.addEventListener("change", handleSelectChange);
+    refs.form?.addEventListener("submit", handleFormSubmit);
+    refs.formCancel?.addEventListener("click", () => toggleEditor(false));
+    refs.exportBtn?.addEventListener("click", exportDictionaries);
+    refs.importBtn?.addEventListener("click", () => refs.importInput?.click());
+    refs.importInput?.addEventListener("change", handleImportFile);
+    refs.formName?.addEventListener("input", handleNameInput);
+    refs.formId?.addEventListener("input", handleIdInput);
+
+    window.addEventListener(OPEN_EVENT, (event) => openModal(event?.detail?.activityName || ""));
+    window.addEventListener(DICTIONARY_EVENT, () => {
+      renderSelector();
+      renderCurrentSection();
+      if (!refs.editorWrapper?.classList.contains("sp-hidden") && state.editingId) {
+        populateForm(api.getDictionaryById(state.editingId));
+      }
+    });
+
+    renderModal();
+  }
+
+  function openModal(activityName) {
+    if (!refs.modal) return;
+    refs.modal.classList.remove("sp-hidden");
+    renderModal(activityName);
+  }
+
+  function closeModal() {
+    refs.modal?.classList.add("sp-hidden");
+    toggleEditor(false);
+  }
+
+  function renderModal(activityName) {
+    state.currentActivityName = activityName || state.currentActivityName || getCurrentActivityName();
+    renderCurrentSection(state.currentActivityName);
+    renderSelector();
+    toggleEditor(false);
+    setFeedback("");
+  }
+
+  function renderCurrentSection(activityNameOverride) {
+    if (!refs.currentContent) return;
+    const activityName = activityNameOverride || getCurrentActivityName();
+    state.currentActivityName = activityName || "";
+    const dictionary = activityName ? api.getDictionaryForActivity(activityName) : null;
+    const nameDisplay = activityName ? `Activité détectée : <strong>${escapeHtml(activityName)}</strong>` : "Activité non renseignée.";
+    let content = `<p>${nameDisplay}</p>`;
+    if (dictionary) {
+      content += renderDictionaryDetails(dictionary);
+      if (refs.currentAddBtn) {
+        refs.currentAddBtn.textContent = "Compléter cette app";
+        refs.currentAddBtn.dataset.dictionaryId = dictionary.id;
+        refs.currentAddBtn.dataset.activityName = activityName || "";
+        refs.currentAddBtn.disabled = false;
+      }
+    } else if (activityName) {
+      content += `<p class="ai-panel__note">Cette activité n’a pas encore de dictionnaire. Ajoutez-en un pour aider l’IA et les enseignants.</p>`;
+      if (refs.currentAddBtn) {
+        refs.currentAddBtn.textContent = "Ajouter cette app";
+        refs.currentAddBtn.dataset.dictionaryId = "";
+        refs.currentAddBtn.dataset.activityName = activityName;
+        refs.currentAddBtn.disabled = false;
+      }
+    } else {
+      content += `<p class="ai-panel__note">Chargez d'abord une activité via les classes pour pouvoir lier un dictionnaire.</p>`;
+      if (refs.currentAddBtn) {
+        refs.currentAddBtn.textContent = "Ajouter une app";
+        refs.currentAddBtn.dataset.dictionaryId = "";
+        refs.currentAddBtn.dataset.activityName = "";
+        refs.currentAddBtn.disabled = true;
+      }
+    }
+    refs.currentContent.innerHTML = content;
+  }
+
+  function renderSelector() {
+    if (!refs.select) return;
+    const previous = refs.select.value || state.selectedId || "";
+    const dictionaries = api.list({ includeSource: true }).sort((a, b) => (a.label || "").localeCompare(b.label || ""));
+    refs.select.innerHTML =
+      `<option value="">Sélectionner...</option>` +
+      dictionaries
+        .map(
+          (dict) =>
+            `<option value="${escapeHtml(dict.id)}"${dict.id === previous ? " selected" : ""}>${escapeHtml(dict.label)}${
+              dict.source === "custom" ? " (perso)" : ""
+            }</option>`
+        )
+        .join("");
+    state.selectedId = refs.select.value || "";
+    renderSelectedDetails();
+  }
+
+  function renderSelectedDetails() {
+    if (!refs.selectedDetails) return;
+    const dictionary = state.selectedId ? api.getDictionaryById(state.selectedId) : null;
+    if (!dictionary) {
+      refs.selectedDetails.innerHTML = `<p>Sélectionnez une app pour consulter son dictionnaire.</p>`;
+      refs.editBtn.disabled = true;
+      refs.removeBtn.disabled = true;
+      return;
+    }
+    refs.selectedDetails.innerHTML = renderDictionaryDetails(dictionary);
+    refs.editBtn.disabled = false;
+    refs.removeBtn.disabled = dictionary.source !== "custom";
+  }
+
+  function renderDictionaryDetails(dict) {
+    if (!dict) {
+      return `<p>Aucune donnée disponible.</p>`;
+    }
+    const chips = `<span class="ai-dictionary-chip">${dict.source === "custom" ? "Personnalisé" : "Défaut"}</span>`;
+    const sections = [];
+    if (dict.description) sections.push(`<div><strong>Description</strong><p>${escapeHtml(dict.description)}</p></div>`);
+    const abbr = renderListFromObject(dict.abbreviations, "Codes");
+    if (abbr) sections.push(abbr);
+    const suffix = renderListFromObject(dict.suffixes, "Suffixes");
+    if (suffix) sections.push(suffix);
+    if (dict.levels?.length) {
+      sections.push(renderListFromArray(dict.levels, "Niveaux / pratiques"));
+    }
+    if (dict.practices?.length) {
+      sections.push(renderListFromArray(dict.practices, "Pratiques"));
+    }
+    if (dict.interpretation?.length) {
+      sections.push(renderListFromArray(dict.interpretation, "Règles d’interprétation"));
+    }
+    if (dict.notes?.length) {
+      sections.push(renderListFromArray(dict.notes, "Notes pédagogiques"));
+    }
+    return `${chips}<div class="ai-dictionary-details__grid">${sections.join("") || "<p>Aucune donnée.</p>"}</div>`;
+  }
+
+  function renderListFromObject(record, title) {
+    const entries = Object.entries(record || {});
+    if (!entries.length) return "";
+    const list = entries.map(([key, value]) => `<li><strong>${escapeHtml(key)}</strong> : ${escapeHtml(value)}</li>`).join("");
+    return `<div><strong>${escapeHtml(title)}</strong><ul>${list}</ul></div>`;
+  }
+
+  function renderListFromArray(list, title) {
+    if (!Array.isArray(list) || !list.length) return "";
+    const items = list.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+    return `<div><strong>${escapeHtml(title)}</strong><ul>${items}</ul></div>`;
+  }
+
+  function handleSelectChange() {
+    state.selectedId = refs.select?.value || "";
+    renderSelectedDetails();
+  }
+
+  function handleCurrentAddClick() {
+    const dictionaryId = refs.currentAddBtn?.dataset.dictionaryId || "";
+    const activityName = refs.currentAddBtn?.dataset.activityName || state.currentActivityName || "";
+    if (dictionaryId) startEditor({ dictionaryId });
+    else startEditor({ activityName });
+  }
+
+  function startEditor({ dictionaryId = null, activityName = "" } = {}) {
+    if (!refs.editorWrapper) return;
+    state.editingId = dictionaryId;
+    state.idTouched = !!dictionaryId;
+    refs.formTitle.textContent = dictionaryId ? "Modifier le dictionnaire" : "Ajouter une app";
+    toggleEditor(true);
+    populateForm(dictionaryId ? api.getDictionaryById(dictionaryId) : null, activityName);
+  }
+
+  function populateForm(dictionary, fallbackName = "") {
+    if (!refs.form) return;
+    refs.form.reset();
+    const label = dictionary?.label || fallbackName || "";
+    refs.formName.value = label;
+    refs.formId.value = dictionary?.id || api.slugify(label || "");
+    refs.formKeywords.value = (dictionary?.keywords || (label ? [label] : [])).join(", ");
+    refs.formDescription.value = dictionary?.description || "";
+    refs.formAbbr.value = formatKeyValueText(dictionary?.abbreviations);
+    refs.formSuffixes.value = formatKeyValueText(dictionary?.suffixes);
+    refs.formLevels.value = formatListText(dictionary?.levels?.length ? dictionary.levels : dictionary?.practices);
+    refs.formInterpretation.value = formatListText(dictionary?.interpretation);
+    refs.formNotes.value = formatListText(dictionary?.notes);
+    refs.formStatus.textContent = "";
+  }
+
+  function toggleEditor(show) {
+    if (!refs.editorWrapper) return;
+    refs.editorWrapper.classList.toggle("sp-hidden", !show);
+    if (!show) {
+      state.editingId = null;
+      state.idTouched = false;
+      refs.form?.reset();
+      refs.formStatus.textContent = "";
+    }
+  }
+
+  function handleFormSubmit(event) {
+    event.preventDefault();
+    if (!refs.form) return;
+    try {
+      const payload = buildFormPayload();
+      if (!payload.id) {
+        setFormStatus("Identifiant invalide.", "error");
+        return;
+      }
+      api.upsertDictionary(payload);
+      setFormStatus("Dictionnaire enregistré.", "success");
+      toggleEditor(false);
+      renderSelector();
+      renderCurrentSection(state.currentActivityName);
+      setFeedback("Dictionnaire mis à jour.", "success");
+    } catch (err) {
+      console.error(err);
+      setFormStatus(err?.message || "Impossible d’enregistrer.", "error");
+    }
+  }
+
+  function buildFormPayload() {
+    const id = api.slugify(refs.formId?.value || "");
+    if (!id) throw new Error("Identifiant requis.");
+    return {
+      id,
+      label: (refs.formName?.value || "").trim() || id,
+      description: refs.formDescription?.value || "",
+      keywords: parseKeywords(refs.formKeywords?.value || ""),
+      abbreviations: parseKeyValueLines(refs.formAbbr?.value || ""),
+      suffixes: parseKeyValueLines(refs.formSuffixes?.value || ""),
+      interpretation: parseList(refs.formInterpretation?.value || ""),
+      notes: parseList(refs.formNotes?.value || ""),
+      levels: parseList(refs.formLevels?.value || ""),
+    };
+  }
+
+  function handleRemoveSelected() {
+    if (!state.selectedId) return;
+    if (!confirm("Supprimer ce dictionnaire personnalisé ?")) return;
+    api.removeDictionary(state.selectedId);
+    state.selectedId = "";
+    renderSelector();
+    renderCurrentSection(state.currentActivityName);
+    setFeedback("Dictionnaire supprimé.", "success");
+  }
+
+  function exportDictionaries() {
+    try {
+      const payload = api.export();
+      const content = JSON.stringify(payload, null, 2);
+      downloadFile(content, `scanprof-dictionnaires-${new Date().toISOString().slice(0, 10)}.json`, "application/json");
+      setFeedback("Export généré.", "success");
+    } catch (err) {
+      console.error(err);
+      setFeedback("Export impossible.", "error");
+    }
+  }
+
+  function handleImportFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        api.import(reader.result, { merge: true });
+        setFeedback("Import fusionné avec succès.", "success");
+        renderSelector();
+        renderCurrentSection(state.currentActivityName);
+      } catch (err) {
+        console.error(err);
+        setFeedback(err?.message || "Import invalide.", "error");
+      } finally {
+        event.target.value = "";
+      }
+    };
+    reader.onerror = () => {
+      setFeedback("Lecture du fichier impossible.", "error");
+      event.target.value = "";
+    };
+    reader.readAsText(file);
+  }
+
+  function downloadFile(content, filename, mime) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  function parseKeyValueLines(text) {
+    const entries = {};
+    text
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .forEach((line) => {
+        const [key, ...rest] = line.split("=");
+        if (!key) return;
+        const normalizedKey = key.trim();
+        const value = rest.join("=").trim();
+        if (normalizedKey) entries[normalizedKey] = value || "";
+      });
+    return entries;
+  }
+
+  function parseKeywords(text) {
+    return text
+      .split(/[,;\n]+/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+  }
+
+  function parseList(text) {
+    return text
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+  function formatKeyValueText(record = {}) {
+    const entries = Object.entries(record || {});
+    if (!entries.length) return "";
+    return entries.map(([key, value]) => `${key} = ${value || ""}`).join("\n");
+  }
+
+  function formatListText(list) {
+    if (!Array.isArray(list) || !list.length) return "";
+    return list.join("\n");
+  }
+
+  function getCurrentActivityName() {
+    try {
+      const raw = localStorage.getItem(AI_CONTEXT_KEY);
+      if (!raw) return "";
+      const parsed = JSON.parse(raw);
+      return parsed?.activite || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function setFeedback(message, type = "info") {
+    if (!refs.feedback) return;
+    refs.feedback.textContent = message || "";
+    refs.feedback.className = "ai-status";
+    if (message) refs.feedback.classList.add(type === "error" ? "error" : "success");
+  }
+
+  function setFormStatus(message, type) {
+    if (!refs.formStatus) return;
+    refs.formStatus.textContent = message;
+    refs.formStatus.className = type === "error" ? "ai-status error" : "ai-status success";
+  }
+
+  function handleNameInput() {
+    if (state.idTouched) return;
+    refs.formId.value = api.slugify(refs.formName?.value || "");
+  }
+
+  function handleIdInput() {
+    state.idTouched = true;
+    refs.formId.value = api.slugify(refs.formId?.value || "");
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? "" : str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+})();

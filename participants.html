@@ -66,6 +66,8 @@
     .ai-btn.text{background:none;border:none;color:var(--sp-muted);padding:0;text-decoration:underline;}
     .ai-actions-grid{display:grid;grid-template-columns:1fr;gap:10px;}
     .ai-status{min-height:1.1em;font-size:0.85rem;color:var(--sp-muted);}
+    .ai-status.success{color:var(--sp-accent-green,#2e8b57);}
+    .ai-status.error{color:var(--sp-accent-red,#c0392b);}
     .ai-question{border-top:1px solid var(--sp-border);padding-top:12px;display:flex;flex-direction:column;gap:8px;}
     .ai-question-suggestions{display:flex;flex-wrap:wrap;gap:6px;font-size:0.8rem;}
     .ai-question-suggestions button{border:none;background:var(--sp-table-even);border-radius:999px;padding:5px 10px;font-size:0.8rem;cursor:pointer;}
@@ -86,6 +88,35 @@
     .ai-modal__loading{display:flex;align-items:center;gap:10px;font-weight:600;}
     .ai-modal__close{border:none;background:transparent;font-size:1.3rem;cursor:pointer;}
     .sp-hidden{display:none !important;}
+
+    .ai-dictionary-hint{margin-top:6px;padding:8px 10px;border:1px dashed var(--sp-border);border-radius:10px;background:var(--sp-table-even);font-size:0.85rem;color:var(--sp-text);}
+    .ai-dictionary-hint--empty{border-color:var(--sp-accent-orange);background:rgba(255,214,153,0.25);}
+    .ai-dictionary-link{border:none;background:none;color:var(--sp-primary);cursor:pointer;font-weight:600;text-decoration:underline;padding:0;margin-left:4px;font-size:0.85rem;}
+
+    .ai-dictionary-modal{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9500;padding:18px;}
+    .ai-dictionary-modal.sp-hidden{display:none;}
+    .ai-dictionary-card{width:min(960px,95vw);max-height:94vh;overflow:hidden;border-radius:18px;background:var(--sp-surface);box-shadow:0 25px 60px rgba(0,0,0,0.45);display:flex;flex-direction:column;}
+    .ai-dictionary-header{padding:16px;border-bottom:1px solid var(--sp-border);display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
+    .ai-dictionary-header p{margin:4px 0 0;font-size:0.85rem;color:var(--sp-muted);}
+    .ai-dictionary-close{border:none;background:none;font-size:1.2rem;cursor:pointer;}
+    .ai-dictionary-body{padding:0 16px;overflow:auto;flex:1;}
+    .ai-dictionary-section{padding:16px 0;border-bottom:1px solid var(--sp-border);display:flex;flex-direction:column;gap:10px;}
+    .ai-dictionary-section:last-child{border-bottom:none;}
+    .ai-dictionary-section__head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
+    .ai-dictionary-section__actions{display:flex;gap:8px;flex-wrap:wrap;}
+    .ai-dictionary-select-row label{display:flex;flex-direction:column;font-size:0.9rem;gap:4px;}
+    .ai-dictionary-select-row select{padding:8px;border-radius:10px;border:1px solid var(--sp-border);background:var(--sp-table-even);color:var(--sp-text);min-width:240px;}
+    .ai-dictionary-details{border:1px solid var(--sp-border);border-radius:12px;padding:12px;background:var(--sp-table-even);font-size:0.9rem;}
+    .ai-dictionary-details__grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;}
+    .ai-dictionary-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:999px;font-size:0.75rem;background:var(--sp-table-odd);border:1px solid var(--sp-border);}
+    .ai-dictionary-editor form{display:grid;gap:10px;}
+    .ai-dictionary-field{display:flex;flex-direction:column;gap:4px;font-size:0.9rem;}
+    .ai-dictionary-field input,
+    .ai-dictionary-field textarea{padding:8px 10px;border-radius:10px;border:1px solid var(--sp-border);background:var(--sp-table-even);color:var(--sp-text);}
+    .ai-dictionary-field textarea{min-height:70px;resize:vertical;}
+    .ai-dictionary-form-actions{display:flex;gap:10px;flex-wrap:wrap;}
+    .ai-dictionary-footer{padding:14px 16px;border-top:1px solid var(--sp-border);display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap;}
+    .ai-dictionary-footer .ai-status{flex:1;min-width:220px;text-align:left;}
   </style>
 
   <script src="theme.js" defer></script>
@@ -94,6 +125,7 @@
   <script src="ai-dictionaries.js" defer></script>
   <script src="ai-prompt.js" defer></script>
   <script src="ai-assistant.js" defer></script>
+  <script src="ai-dictionary-ui.js" defer></script>
 </head>
 <body>
   <div class="wrap">
@@ -107,6 +139,7 @@
         <button class="button blue" onclick="trierParticipants()">🔃 Trier</button>
         <button class="button red" onclick="resetData()">♻️ Réinitialiser</button>
         <button type="button" class="ai-trigger" id="ai-open-btn">🤖 IA</button>
+        <button type="button" class="button" id="ai-dictionary-open-btn">📘 Dictionnaire</button>
       </div>
 
       <!-- Filtre texte -->
@@ -216,6 +249,7 @@
         <textarea id="ai-interpretation-notes" placeholder="Ex : bu = burpees ; cr = crunch ; V = voie ; P = pénalité"></textarea>
         <p class="ai-panel__note">Ces indications restent sur cet appareil et aident ponctuellement l’IA.</p>
       </details>
+      <div class="ai-dictionary-hint ai-dictionary-hint--empty" id="ai-dictionary-hint">Chargement du référentiel en cours...</div>
       <div class="ai-actions-grid">
         <button type="button" class="ai-btn primary" id="ai-action-bilan">Bilan de la séance</button>
         <button type="button" class="ai-btn outline" id="ai-action-difficulte">Élèves en difficulté</button>
@@ -265,6 +299,99 @@
       </div>
     </div>
   </div>
+
+  <div class="ai-dictionary-modal sp-hidden" id="ai-dictionary-modal">
+    <div class="ai-dictionary-card" role="dialog" aria-modal="true">
+      <div class="ai-dictionary-header">
+        <div>
+          <strong>Référentiel d'activité</strong>
+          <p>Centralisez les codes, abréviations et règles pour l’IA et les enseignants.</p>
+        </div>
+        <button type="button" class="ai-dictionary-close" id="ai-dictionary-close">✖</button>
+      </div>
+      <div class="ai-dictionary-body">
+        <section class="ai-dictionary-section" id="ai-dictionary-current-section">
+          <div class="ai-dictionary-section__head">
+            <h3>Activité en cours</h3>
+            <button type="button" class="ai-btn outline" id="ai-dictionary-add-current-btn">Ajouter cette app</button>
+          </div>
+          <div class="ai-dictionary-details" id="ai-dictionary-current-content">
+            <p>Aucune activité détectée.</p>
+          </div>
+        </section>
+        <section class="ai-dictionary-section">
+          <div class="ai-dictionary-section__head">
+            <h3>Catalogue des apps</h3>
+            <div class="ai-dictionary-section__actions">
+              <button type="button" class="ai-btn outline" id="ai-dictionary-add-btn">➕ Nouvelle app</button>
+              <button type="button" class="ai-btn outline" id="ai-dictionary-edit-btn" disabled>✏️ Modifier</button>
+              <button type="button" class="ai-btn danger" id="ai-dictionary-remove-btn" disabled>🗑 Supprimer</button>
+            </div>
+          </div>
+          <div class="ai-dictionary-select-row">
+            <label>Choisir une app documentée
+              <select id="ai-dictionary-select">
+                <option value="">Sélectionner...</option>
+              </select>
+            </label>
+          </div>
+          <div id="ai-dictionary-selected-details" class="ai-dictionary-details"></div>
+        </section>
+        <section class="ai-dictionary-section sp-hidden" id="ai-dictionary-editor">
+          <h3 id="ai-dictionary-editor-title">Ajouter une app</h3>
+          <form id="ai-dictionary-form">
+            <div class="ai-dictionary-field">
+              <label for="dict-app-name">Nom de l’app</label>
+              <input type="text" id="dict-app-name" required>
+            </div>
+            <div class="ai-dictionary-field">
+              <label for="dict-app-id">Identifiant technique</label>
+              <input type="text" id="dict-app-id" required>
+            </div>
+            <div class="ai-dictionary-field">
+              <label for="dict-app-keywords">Mots-clés (séparés par des virgules)</label>
+              <input type="text" id="dict-app-keywords" placeholder="ex : cross, cardio, circuit">
+            </div>
+            <div class="ai-dictionary-field">
+              <label for="dict-app-description">Description courte</label>
+              <textarea id="dict-app-description" placeholder="Résumé de l’activité."></textarea>
+            </div>
+            <div class="ai-dictionary-field">
+              <label for="dict-app-abbreviations">Codes / abréviations (une ligne : code = signification)</label>
+              <textarea id="dict-app-abbreviations" placeholder="bu = Burpees"></textarea>
+            </div>
+            <div class="ai-dictionary-field">
+              <label for="dict-app-suffixes">Suffixes (code = signification)</label>
+              <textarea id="dict-app-suffixes" placeholder="_r = réalisé"></textarea>
+            </div>
+            <div class="ai-dictionary-field">
+              <label for="dict-app-levels">Niveaux / pratiques (une ligne par élément)</label>
+              <textarea id="dict-app-levels" placeholder="M = moulinette"></textarea>
+            </div>
+            <div class="ai-dictionary-field">
+              <label for="dict-app-interpretation">Règles d’interprétation (une idée par ligne)</label>
+              <textarea id="dict-app-interpretation" placeholder="Comparer prévu vs réalisé pour repérer la gestion d’effort."></textarea>
+            </div>
+            <div class="ai-dictionary-field">
+              <label for="dict-app-notes">Notes pédagogiques (une idée par ligne)</label>
+              <textarea id="dict-app-notes"></textarea>
+            </div>
+            <div class="ai-dictionary-form-actions">
+              <button type="submit" class="ai-btn primary">💾 Enregistrer</button>
+              <button type="button" class="ai-btn outline" id="dict-form-cancel">Annuler</button>
+            </div>
+            <div class="ai-status" id="dict-form-status"></div>
+          </form>
+        </section>
+      </div>
+      <div class="ai-dictionary-footer">
+        <button type="button" class="ai-btn outline" id="ai-dictionary-export-btn">📤 Exporter</button>
+        <button type="button" class="ai-btn outline" id="ai-dictionary-import-btn">📥 Importer</button>
+        <div class="ai-status" id="ai-dictionary-feedback"></div>
+      </div>
+    </div>
+  </div>
+  <input type="file" id="ai-dictionary-import-input" accept="application/json,.json" class="sp-hidden">
 
   <!-- Migration unique : convertit les clés MAJ -> minuscules (base fields) -->
   <script>

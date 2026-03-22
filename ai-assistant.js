@@ -65,6 +65,8 @@
     "Question posée": "❓",
     Erreur: "⚠️",
   };
+  const DICTIONARY_EVENT = "scanprof:dictionaries-changed";
+  const OPEN_DICTIONARY_EVENT = "scanprof:open-dictionary";
 
   let refs = {};
   let lastReportText = "";
@@ -74,6 +76,7 @@
   let currentModel = PROVIDERS[DEFAULT_PROVIDER].defaultModel;
   let lastIntent = "bilan";
   let lastQuestionText = "";
+  let lastActivityName = "";
 
   document.addEventListener("DOMContentLoaded", initAssistant);
 
@@ -201,20 +204,35 @@
   function buildInterpretationSupport({ columns = [], activityName = "", manualText = "", dictionary = null }) {
     const cleanColumns = (columns || []).map((col) => (col == null ? "" : String(col))).filter(Boolean);
     const trimmedManual = (manualText || "").trim();
+    const safeDictionary = sanitizeDictionaryForPrompt(dictionary);
     const guides = [];
     if (cleanColumns.length) {
       guides.push(`Colonnes détectées : ${cleanColumns.join(", ")}`);
     }
-    if (dictionary && dictionary.columns) {
-      const entries = Object.entries(dictionary.columns)
-        .map(([key, desc]) => `${key} : ${desc}`)
-        .slice(0, 12);
-      if (entries.length) {
-        const label = dictionary.label || dictionary.key || "Activité";
-        guides.push(`Dictionnaire ${label} :\n${entries.join("\n")}`);
+    if (safeDictionary) {
+      const label = safeDictionary.label || safeDictionary.id || "Activité";
+      if (safeDictionary.description) {
+        guides.push(`Description ${label} : ${safeDictionary.description}`);
       }
-      if (dictionary.notes && dictionary.notes.length) {
-        guides.push(`Repères activité : ${dictionary.notes.join(" ")}`);
+      const abbreviationsGuide = formatDictionaryPairs(safeDictionary.abbreviations, 12);
+      if (abbreviationsGuide) {
+        guides.push(`Codes ${label} :\n${abbreviationsGuide}`);
+      }
+      const suffixGuide = formatDictionaryPairs(safeDictionary.suffixes, 8);
+      if (suffixGuide) {
+        guides.push(`Suffixes ${label} :\n${suffixGuide}`);
+      }
+      if (safeDictionary.levels?.length) {
+        guides.push(`Niveaux / difficultés : ${safeDictionary.levels.slice(0, 10).join(", ")}`);
+      }
+      if (safeDictionary.practices?.length) {
+        guides.push(`Pratiques : ${safeDictionary.practices.slice(0, 10).join(", ")}`);
+      }
+      if (safeDictionary.interpretation?.length) {
+        guides.push(`Règles d'interprétation : ${safeDictionary.interpretation.join(" ")}`);
+      }
+      if (safeDictionary.notes?.length) {
+        guides.push(`Repères activité : ${safeDictionary.notes.join(" ")}`);
       }
     }
     if (trimmedManual) {
@@ -223,12 +241,35 @@
     return {
       activityName,
       columns: cleanColumns,
-      dictionary: dictionary
-        ? { key: dictionary.key, label: dictionary.label || "", columns: dictionary.columns || {}, notes: dictionary.notes || [] }
-        : null,
+      dictionary: safeDictionary,
       manual: trimmedManual,
       guides,
     };
+  }
+
+  function sanitizeDictionaryForPrompt(dictionary) {
+    if (!dictionary) return null;
+    return {
+      id: dictionary.id || "",
+      label: dictionary.label || dictionary.id || "",
+      description: dictionary.description || "",
+      abbreviations: { ...(dictionary.abbreviations || {}) },
+      suffixes: { ...(dictionary.suffixes || {}) },
+      interpretation: Array.isArray(dictionary.interpretation) ? dictionary.interpretation.filter(Boolean) : [],
+      notes: Array.isArray(dictionary.notes) ? dictionary.notes.filter(Boolean) : [],
+      levels: Array.isArray(dictionary.levels) ? dictionary.levels.filter(Boolean) : [],
+      practices: Array.isArray(dictionary.practices) ? dictionary.practices.filter(Boolean) : [],
+      source: dictionary.source || "default",
+    };
+  }
+
+  function formatDictionaryPairs(record = {}, limit = 12) {
+    const entries = Object.entries(record || {});
+    if (!entries.length) return "";
+    return entries
+      .slice(0, limit)
+      .map(([key, desc]) => `${key} : ${desc}`)
+      .join("\n");
   }
 
   function initAssistant() {
@@ -243,6 +284,7 @@
       testBtn: document.getElementById("ai-test-key-btn"),
       notesField: document.getElementById("ai-session-notes"),
       interpretationField: document.getElementById("ai-interpretation-notes"),
+      dictionaryHint: document.getElementById("ai-dictionary-hint"),
       keyStatus: document.getElementById("ai-key-status"),
       runStatus: document.getElementById("ai-run-status"),
       questionInput: document.getElementById("ai-question-input"),
@@ -274,6 +316,7 @@
 
     loadStoredSettings();
     bindEvents();
+    setupDictionaryHint();
     updateSummaryUI();
     const eventName = (window.ScanProfParticipants && window.ScanProfParticipants.eventName) || "scanprof:dataset-changed";
     document.addEventListener(eventName, () => updateSummaryUI());
@@ -314,6 +357,61 @@
       refs.modal.addEventListener("click", (event) => {
         if (event.target === refs.modal) closeModal();
       });
+    }
+  }
+
+  function setupDictionaryHint() {
+    refreshDictionaryHint();
+    if (refs.dictionaryHint) {
+      refs.dictionaryHint.addEventListener("click", handleDictionaryHintClick);
+    }
+    window.addEventListener(DICTIONARY_EVENT, () => refreshDictionaryHint());
+  }
+
+  function refreshDictionaryHint(activityName) {
+    if (!refs.dictionaryHint) return;
+    const storedContext = getStoredAIContext();
+    const target = (activityName || "").trim() || lastActivityName || storedContext.activite || "";
+    if (target) lastActivityName = target;
+    const dictionary = target ? getActivityDictionary(target) : null;
+    const activityLabel = target ? `« ${target} »` : "cette activité";
+    if (dictionary) {
+      refs.dictionaryHint.innerHTML = `📘 Référentiel chargé : <strong>${escapeHtml(
+        dictionary.label || dictionary.id || "Activité"
+      )}</strong> (${dictionary.source === "custom" ? "personnalisé" : "par défaut"}).`;
+      refs.dictionaryHint.classList.remove("ai-dictionary-hint--empty");
+      refs.dictionaryHint.dataset.state = "loaded";
+      refs.dictionaryHint.setAttribute("aria-live", "polite");
+    } else {
+      const message = target
+        ? `Cette activité n’a pas encore de dictionnaire d’interprétation.`
+        : "Associez la séance à une activité pour charger un dictionnaire.";
+      refs.dictionaryHint.innerHTML = `${message} <button type="button" class="ai-dictionary-link" data-dictionary-action="open">Ajouter / compléter</button>`;
+      refs.dictionaryHint.classList.add("ai-dictionary-hint--empty");
+      refs.dictionaryHint.dataset.state = "empty";
+      refs.dictionaryHint.setAttribute("aria-live", "polite");
+    }
+  }
+
+  function handleDictionaryHintClick(event) {
+    const trigger = event.target.closest("[data-dictionary-action]");
+    if (!trigger) return;
+    const action = trigger.getAttribute("data-dictionary-action");
+    if (action === "open") {
+      openDictionaryPanel(lastActivityName || getStoredAIContext().activite || "");
+    }
+  }
+
+  function openDictionaryPanel(activityName = "") {
+    try {
+      window.dispatchEvent(
+        new CustomEvent(OPEN_DICTIONARY_EVENT, {
+          detail: { activityName, source: "assistant" },
+        })
+      );
+    } catch {
+      const btn = document.getElementById("ai-dictionary-open-btn");
+      if (btn) btn.click();
     }
   }
 
@@ -485,13 +583,22 @@
         sessionDate: storedContext?.date || null,
         updatedAt:
           (summary.meta && (summary.meta.updatedAt || summary.meta.savedAt)) || new Date().toISOString(),
+        dictionaryInfo: null,
       };
-      const activityDictionary = getActivityDictionary(currentContext.activityName || storedContext.activite || "");
+      const dictionaryMatch = getActivityDictionary(currentContext.activityName || storedContext.activite || "");
+      if (dictionaryMatch) {
+        currentContext.dictionaryInfo = {
+          id: dictionaryMatch.id,
+          label: dictionaryMatch.label || dictionaryMatch.id || "Activité",
+          source: dictionaryMatch.source || "default",
+        };
+      }
+      refreshDictionaryHint(currentContext.activityName || storedContext.activite || "");
       const interpretationSupport = buildInterpretationSupport({
         columns: summary.columns || [],
         activityName: currentContext.activityName || "",
         manualText: manualInterpretation,
-        dictionary: activityDictionary,
+        dictionary: dictionaryMatch,
       });
       lastQuestionText = intent === "question" ? (questionText || "").trim() : "";
       const analysisInput = {
@@ -826,6 +933,12 @@
       const date = new Date(dateSource);
       lines.push(`<div class="ai-context__line">🕒 ${escapeHtml(date.toLocaleString())}</div>`);
     }
+    if (meta.dictionaryInfo?.label) {
+      const sourceLabel = meta.dictionaryInfo.source === "custom" ? "personnalisé" : "par défaut";
+      lines.push(
+        `<div class="ai-context__line">📘 Référentiel : ${escapeHtml(meta.dictionaryInfo.label)} (${sourceLabel})</div>`
+      );
+    }
     if (!lines.length) {
       logDebug("Modal context hidden (no lines)");
       refs.modalContext.classList.add("sp-hidden");
@@ -940,6 +1053,8 @@
     const summary = summarizeDataset();
     const storedContext = getStoredAIContext();
     const meta = summary.meta || {};
+    const activityName = storedContext.activite || meta.activityName || "";
+    refreshDictionaryHint(activityName);
     const prominentClass =
       storedContext.classe ||
       meta.className ||
