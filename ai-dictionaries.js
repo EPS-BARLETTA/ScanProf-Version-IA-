@@ -384,9 +384,15 @@
   }
 
   function listDictionaries(options = {}) {
-    const all = computeEffectiveDictionaries();
     const includeSource = !!options.includeSource;
-    return Object.values(all).map((dict) => (includeSource ? attachSource(dict) : deepClone(dict)));
+    try {
+      const all = computeEffectiveDictionaries();
+      return Object.values(all).map((dict) => (includeSource ? attachSource(dict) : deepClone(dict)));
+    } catch (err) {
+      console.error("[ScanProfAIDictionaries] list() failed, fallback to defaults.", err);
+      const fallback = normalizeAll(getDefaultDictionaries());
+      return Object.values(fallback).map((dict) => (includeSource ? attachSource(dict) : deepClone(dict)));
+    }
   }
 
   function getDictionaryById(id) {

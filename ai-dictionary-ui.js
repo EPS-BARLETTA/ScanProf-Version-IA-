@@ -123,6 +123,10 @@
     const activityName = activityNameOverride || getCurrentActivityName();
     state.currentActivityName = activityName || "";
     const dictionary = activityName ? api.getDictionaryForActivity(activityName) : null;
+    console.debug("[ScanProf Dictionary] Render current section", {
+      activityName: state.currentActivityName || null,
+      dictionaryId: dictionary?.id || null,
+    });
     const nameDisplay = activityName ? `Activité détectée : <strong>${escapeHtml(activityName)}</strong>` : "Activité non renseignée.";
     let content = `<p>${nameDisplay}</p>`;
     if (dictionary) {
@@ -162,14 +166,9 @@
   function renderSelector() {
     if (!refs.select) return;
     const previous = refs.select.value || state.selectedId || "";
-    let dictionaries = api.list({ includeSource: true }) || [];
-    if (!dictionaries.length && api.DEFAULT_DICTIONARIES) {
-      dictionaries = Object.values(api.DEFAULT_DICTIONARIES).map((dict) => ({
-        ...dict,
-        source: dict.source || "default",
-      }));
-    }
-    dictionaries = dictionaries.sort((a, b) => (a.label || "").localeCompare(b.label || ""));
+    const dictionaries = getCatalogueDictionaries()
+      .slice()
+      .sort((a, b) => (a.label || "").localeCompare(b.label || ""));
     refs.select.innerHTML =
       `<option value="">Sélectionner...</option>` +
       dictionaries
@@ -199,6 +198,38 @@
     refs.editBtn.disabled = false;
     refs.removeBtn.disabled = dictionary.source !== "custom";
     updateApplyResetControls();
+  }
+
+  function getCatalogueDictionaries() {
+    if (!api) return [];
+    let dictionaries = [];
+    let error = null;
+    try {
+      dictionaries = api.list({ includeSource: true }) || [];
+    } catch (err) {
+      error = err;
+      console.error("[ScanProf Dictionary] Impossible de charger les dictionnaires personnalisés :", err);
+      dictionaries = [];
+    }
+    if (!dictionaries.length && api.DEFAULT_DICTIONARIES) {
+      const fallback = Object.values(api.DEFAULT_DICTIONARIES);
+      dictionaries = fallback.map((dict) => ({
+        ...dict,
+        source: dict.source || "default",
+      }));
+    }
+    logCatalogueDebug({
+      fetchedCount: Array.isArray(dictionaries) ? dictionaries.length : 0,
+      hadError: !!error,
+      defaultKeys: api.DEFAULT_DICTIONARIES ? Object.keys(api.DEFAULT_DICTIONARIES) : [],
+      labels: (dictionaries || []).map((dict) => dict.label || dict.id),
+    });
+    return dictionaries;
+  }
+
+  function logCatalogueDebug(info) {
+    if (!window || !window.console || typeof console.debug !== "function") return;
+    console.debug("[ScanProf Dictionary] Catalogue", info);
   }
 
   function renderDictionaryDetails(dict) {

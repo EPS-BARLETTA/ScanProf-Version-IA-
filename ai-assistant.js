@@ -800,6 +800,7 @@
       return;
     }
     logDebug("Dataset loaded", { size: dataset.length });
+    logDebug("Dataset sample columns", { columns: summarizeDataset().columns || [] });
     const { key: providerKey, label: providerLabel } = getProviderConfig();
 
     setPanelBusy(true);
@@ -813,10 +814,16 @@
       const summary = summarizeDataset();
       const manualInterpretation = refs.interpretationField?.value || localStorage.getItem(STORAGE.INTERPRETATION) || "";
       const autoDictionary = getActivityDictionary(currentContext.activityName || storedContext.activite || "");
+      logDebug("Dictionary detection state", {
+        storedActivity: storedContext.activite || null,
+        manualDictionaryId: manualEntry?.dictionaryId || null,
+        autoDictionaryId: autoDictionary?.id || null,
+      });
       rememberAutoDictionary(storedContext, autoDictionary);
       const manualEntry = getManualDictionaryEntry(storedContext);
       const manualDictionary = manualEntry?.dictionary || null;
       const dictionaryToUse = manualDictionary || autoDictionary;
+      logDebug("Dictionary to use", { id: dictionaryToUse?.id || null, label: dictionaryToUse?.label || null });
       const retentionPlan = buildColumnRetentionPlan(summary.columns || [], dictionaryToUse, manualInterpretation);
       const sliced = dataset.slice(0, MAX_ELEVES).map((entry) => cleanEntry(entry, retentionPlan));
       logDebug("Dataset trimmed", {
@@ -866,6 +873,11 @@
             summary,
           })
         : null;
+      logDebug("Pre-analysis completed", {
+        hasEngine: !!interpretationEngine,
+        coverage: preAnalysis?.coverage || null,
+        unknownCodes: preAnalysis?.unknown_codes?.length || 0,
+      });
       currentContext.preAnalysis = preAnalysis;
       if (preAnalysis?.coverage && currentContext.dictionaryInfo) {
         currentContext.dictionaryInfo.coverage = preAnalysis.coverage;
@@ -907,6 +919,11 @@
         throw new Error("Module de prompt introuvable.");
       }
       const { messages, schema } = builder.buildPrompt({ analysisInput, mode: intent });
+      logDebug("Prompt built", {
+        intent,
+        schemaKeys: schema.map((section) => section.key),
+        messageCount: messages.length,
+      });
       logDebug("Prompt schema keys", schema.map((section) => section.key));
       logPromptDiagnostics(messages, sliced, summary.columns || []);
       const model = getSelectedModel();
