@@ -1,4 +1,5 @@
 (function () {
+  alert("ai-dictionary-ui loaded");
   console.log("[ScanProf Dictionary] ai-dictionary-ui loaded");
   const OPEN_EVENT = "scanprof:open-dictionary";
   const DICTIONARY_EVENT = "scanprof:dictionaries-changed";
@@ -21,6 +22,7 @@
   document.addEventListener("DOMContentLoaded", init);
 
   function init() {
+    alert("dictionary init called");
     console.log("[ScanProf Dictionary] init called");
     console.debug("[ScanProf Dictionary] init start", { hasApi: !!api });
     refs.openBtn = document.getElementById("ai-dictionary-open-btn");
@@ -175,6 +177,7 @@
   }
 
   function renderSelector() {
+    alert("renderSelector called");
     console.log("[ScanProf Dictionary] renderSelector running");
     if (!refs.select) {
       console.error("[ScanProf Dictionary] refs.select introuvable.");
