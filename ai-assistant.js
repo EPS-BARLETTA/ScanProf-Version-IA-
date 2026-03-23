@@ -879,6 +879,21 @@
         unknownCodes: preAnalysis?.unknown_codes?.length || 0,
       });
       currentContext.preAnalysis = preAnalysis;
+      const analyticsEngine = window.ScanProfClassAnalytics;
+      const classAnalytics = analyticsEngine
+        ? analyticsEngine.analyze({
+            dataset: sliced,
+            dictionary: dictionaryToUse,
+            summary,
+            manualText: manualInterpretation,
+          })
+        : null;
+      logDebug("Class analytics completed", {
+        hasEngine: !!analyticsEngine,
+        hasAnalytics: !!classAnalytics,
+        measures: Object.keys(classAnalytics?.measures || {}),
+      });
+      currentContext.classAnalytics = classAnalytics;
       if (preAnalysis?.coverage && currentContext.dictionaryInfo) {
         currentContext.dictionaryInfo.coverage = preAnalysis.coverage;
       }
@@ -906,13 +921,15 @@
           lastQuestionText,
           storedContext,
           interpretationSupport,
-          preAnalysis
+          preAnalysis,
+          classAnalytics
         ),
         eleves: sliced,
         intent,
         questionText: lastQuestionText,
         interpretation: interpretationSupport,
         pre_analysis: preAnalysis,
+        class_analytics: classAnalytics,
       };
       const builder = window.ScanProfAIPrompt;
       if (!builder || typeof builder.buildPrompt !== "function") {
@@ -964,7 +981,8 @@
     questionText,
     storedContext,
     interpretationSupport,
-    preAnalysis
+    preAnalysis,
+    classAnalytics
   ) {
     const meta = summary.meta || {};
     const bestClass = meta?.className || summary.classes?.[0]?.name || "";
@@ -990,6 +1008,7 @@
     if (interpretationSupport?.dictionary) info.dictionnaire_activite = interpretationSupport.dictionary;
     if (interpretationSupport?.manual) info.indications_enseignant_interpretation = interpretationSupport.manual;
     if (preAnalysis) info.pre_analysis = preAnalysis;
+    if (classAnalytics) info.class_analytics = classAnalytics;
     if (totalEntries > usedEntries) {
       info.tronque = `Seuls ${usedEntries} élèves sur ${totalEntries} ont été envoyés pour limiter la taille du prompt.`;
     }
@@ -1059,9 +1078,46 @@
       if (ctx.pre_analysis?.pedagogical_signals?.length > 3) {
         ctx.pre_analysis.pedagogical_signals = ctx.pre_analysis.pedagogical_signals.slice(0, 3);
       }
+      if (ctx.class_analytics) {
+        ctx.class_analytics = slimClassAnalyticsPayload(ctx.class_analytics);
+      }
     }
     const slimJson = JSON.stringify(parsedPayload);
     return `${hint}\n${block.prefix}${slimJson}\n${block.suffix}\n\n(Version condensée pour relancer.)`;
+  }
+
+  function slimClassAnalyticsPayload(payload) {
+    if (!payload || typeof payload !== "object") return payload;
+    const clone = { ...payload };
+    if (clone.class_overview) {
+      clone.class_overview = { ...clone.class_overview };
+      if (Array.isArray(clone.class_overview.highlights) && clone.class_overview.highlights.length > 3) {
+        clone.class_overview.highlights = clone.class_overview.highlights.slice(0, 3);
+      }
+      if (Array.isArray(clone.class_overview.summary) && clone.class_overview.summary.length > 6) {
+        clone.class_overview.summary = clone.class_overview.summary.slice(0, 6);
+      }
+    }
+    if (clone.data_quality?.issues?.length > 4) {
+      clone.data_quality = { ...clone.data_quality, issues: clone.data_quality.issues.slice(0, 4) };
+    }
+    if (clone.distributions && typeof clone.distributions === "object") {
+      const trimmed = {};
+      Object.entries(clone.distributions).forEach(([key, dist]) => {
+        if (!dist || typeof dist !== "object") return;
+        trimmed[key] = {
+          ...dist,
+          buckets: Array.isArray(dist.buckets) ? dist.buckets.slice(0, 4) : dist.buckets,
+        };
+      });
+      clone.distributions = trimmed;
+    }
+    ["comparisons", "student_groups", "pedagogical_signals", "limits"].forEach((field) => {
+      if (Array.isArray(clone[field]) && clone[field].length > 4) {
+        clone[field] = clone[field].slice(0, 4);
+      }
+    });
+    return clone;
   }
 
   function extractJsonBlock(content = "") {

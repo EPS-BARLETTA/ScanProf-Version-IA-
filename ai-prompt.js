@@ -61,6 +61,8 @@
       "Tu peux citer un code ou une colonne si c'est nécessaire pour signaler une limite ou une consigne claire.",
       "Appuie-toi sur l'objet `pre_analysis` : restitue les `known_facts`, signale les `unknown_codes`, exploite `allowed_comparisons`, `pedagogical_signals` et `questions_for_teacher` pour guider l'enseignant.",
       "Si `pre_analysis` contient `unknown_codes`, mentionne explicitement que l'analyse reste prudente dessus.",
+      "Les indicateurs pré-calculés se trouvent dans `class_analytics` (context, data_quality, class_overview, distributions, measures, comparisons, student_groups, pedagogical_signals, limits) : reformule-les clairement sans effectuer de nouveaux calculs ni extrapoler.",
+      "Utilise les pourcentages fournis pour produire des formulations comme « la moitié », « un tiers », « X % » ; si une donnée manque, signale la limite correspondante plutôt que d'inventer.",
       "N'utilise jamais de blocs de code dans ta réponse finale.",
       "Le ton doit rester professionnel, positif et directement exploitable.",
       "Structure obligatoirement ta réponse en JSON strict, sans ajout de texte avant ou après. Utilise exactement la structure suivante :",
@@ -75,13 +77,14 @@
       .filter(Boolean)
       .join("\n");
 
-    const content = {
+  const content = {
       contexte,
       intention: mode,
       donnees_eleves: payload.eleves || [],
       question: payload.questionText || "",
       interpretation: payload.interpretation || null,
       pre_analysis: payload.pre_analysis || null,
+      class_analytics: payload.class_analytics || null,
     };
 
   const messages = [
