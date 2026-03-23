@@ -169,6 +169,11 @@
     const dictionaries = getCatalogueDictionaries()
       .slice()
       .sort((a, b) => (a.label || "").localeCompare(b.label || ""));
+    console.debug("[ScanProf Dictionary] renderSelector", {
+      previous,
+      dictionaryCount: dictionaries.length,
+      labels: dictionaries.map((dict) => dict.label || dict.id),
+    });
     refs.select.innerHTML =
       `<option value="">Sélectionner...</option>` +
       dictionaries
@@ -180,6 +185,10 @@
         )
         .join("");
     state.selectedId = refs.select.value || "";
+    console.debug("[ScanProf Dictionary] renderSelector result", {
+      selectedId: state.selectedId,
+      selectHtmlLength: refs.select.innerHTML.length,
+    });
     renderSelectedDetails();
     updateApplyResetControls();
   }

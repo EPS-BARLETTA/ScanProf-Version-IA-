@@ -4,6 +4,11 @@
   };
 
   const EVENT_NAME = "scanprof:dictionaries-changed";
+  try {
+    console.debug("[ScanProfAIDictionaries] DEFAULT_DICTIONARIES keys", Object.keys(DEFAULT_DICTIONARIES));
+  } catch {
+    /* console unavailable */
+  }
   const DEFAULT_DICTIONARIES = Object.freeze({
     cross_training: {
       id: "cross_training",
@@ -387,11 +392,15 @@
     const includeSource = !!options.includeSource;
     try {
       const all = computeEffectiveDictionaries();
-      return Object.values(all).map((dict) => (includeSource ? attachSource(dict) : deepClone(dict)));
+      const values = Object.values(all).map((dict) => (includeSource ? attachSource(dict) : deepClone(dict)));
+      console.debug("[ScanProfAIDictionaries] list() result", { count: values.length, includeSource });
+      return values;
     } catch (err) {
       console.error("[ScanProfAIDictionaries] list() failed, fallback to defaults.", err);
       const fallback = normalizeAll(getDefaultDictionaries());
-      return Object.values(fallback).map((dict) => (includeSource ? attachSource(dict) : deepClone(dict)));
+      const values = Object.values(fallback).map((dict) => (includeSource ? attachSource(dict) : deepClone(dict)));
+      console.debug("[ScanProfAIDictionaries] fallback list() result", { count: values.length, includeSource });
+      return values;
     }
   }
 
