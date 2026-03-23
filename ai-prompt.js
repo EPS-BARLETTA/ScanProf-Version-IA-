@@ -57,6 +57,7 @@
       "Si une information clé n'est pas comprise, signale clairement la limite ou propose de poser la question correspondante.",
       "Chaque champ texte doit tenir en UNE SEULE phrase simple (≤ 12 mots).",
       "Chaque liste doit contenir au maximum 3 éléments courts, concrets, actionnables.",
+      "Chaque liste doit contenir au moins un élément : si aucune donnée exploitable, ajoute «Aucune donnée exploitable.» comme entrée unique.",
       "Tu peux citer un code ou une colonne si c'est nécessaire pour signaler une limite ou une consigne claire.",
       "Appuie-toi sur l'objet `pre_analysis` : restitue les `known_facts`, signale les `unknown_codes`, exploite `allowed_comparisons`, `pedagogical_signals` et `questions_for_teacher` pour guider l'enseignant.",
       "Si `pre_analysis` contient `unknown_codes`, mentionne explicitement que l'analyse reste prudente dessus.",

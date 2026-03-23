@@ -5,6 +5,7 @@
     const manualTokens = extractManualTokens(manualText);
     const classification = classifyColumns(columns, dictionary, manualTokens);
     const knownFacts = buildKnownFacts(summary, dictionary, dataset);
+    augmentKnownFactsWithClassification(knownFacts, classification);
     const unknownCodes = classification.unknown.map((entry) => formatReason(entry.name, entry.reason));
     const uncertainFields = buildUncertainties(classification, dictionary);
     const allowedComparisons = buildAllowedComparisons(classification, dictionary, columns);
@@ -54,6 +55,23 @@
     return facts;
   }
 
+  function augmentKnownFactsWithClassification(facts = [], classification = {}) {
+    if (!Array.isArray(facts) || !classification) return;
+    if (classification.documented?.length) {
+      facts.push(
+        `${classification.documented.length} code(s) reconnu(s) : ${summarizeColumnList(classification.documented)}`
+      );
+    }
+    if (classification.partial?.length) {
+      facts.push(
+        `${classification.partial.length} code(s) partiellement compris : ${summarizeColumnList(classification.partial)}`
+      );
+    }
+    if (classification.unknown?.length) {
+      facts.push(`${classification.unknown.length} code(s) à documenter.`);
+    }
+  }
+
   function buildUncertainties(classification, dictionary) {
     const uncertainties = [];
     if (dictionary?.teacher_context_required) {
@@ -99,16 +117,31 @@
     if (Array.isArray(dictionary?.signal_rules)) {
       signals.push(...dictionary.signal_rules);
     }
+    if (classification.documented.length) {
+      signals.push(`Colonnes exploitables : ${summarizeColumnList(classification.documented)}.`);
+    }
+    if (!classification.documented.length && classification.partial.length) {
+      signals.push("Plusieurs codes partiellement compris : confirmer leur signification pour affiner l'analyse.");
+    }
+    if (classification.unknown.length) {
+      signals.push("Documenter les codes inconnus pour enrichir les recommandations.");
+    }
     if (!dictionary && classification.documented.length === 0) {
       signals.push("Rester sur des observations factuelles tant que le dictionnaire n'est pas renseigné.");
     }
-    return signals;
+    if (!signals.length) {
+      signals.push("S'appuyer sur les données observables et expliciter les limites restantes.");
+    }
+    return Array.from(new Set(signals));
   }
 
   function buildQuestions(dictionary, classification) {
     const questions = [];
     classification.unknown.forEach((item) => {
       questions.push(`Que signifie ${item.name} dans cette activité ?`);
+    });
+    classification.partial.forEach((item) => {
+      questions.push(`Préciser ${item.name} pour fiabiliser l'analyse (${item.reason}).`);
     });
     if (Array.isArray(dictionary?.limits)) {
       dictionary.limits.forEach((limit) => questions.push(limit));
@@ -206,6 +239,13 @@
   function formatReason(name, reason) {
     if (!reason) return name;
     return `${name} — ${reason}`;
+  }
+
+  function summarizeColumnList(entries = [], limit = 3) {
+    if (!Array.isArray(entries) || !entries.length) return "—";
+    const names = entries.slice(0, limit).map((entry) => entry.name);
+    const extra = entries.length > limit ? ` +${entries.length - limit}` : "";
+    return `${names.join(", ")}${extra}`;
   }
 
   window.ScanProfAIInterpretationEngine = {

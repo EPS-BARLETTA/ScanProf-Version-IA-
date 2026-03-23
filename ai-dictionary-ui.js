@@ -1,5 +1,4 @@
 (function () {
-  alert("ai-dictionary-ui loaded");
   console.log("[ScanProf Dictionary] ai-dictionary-ui loaded");
   const OPEN_EVENT = "scanprof:open-dictionary";
   const DICTIONARY_EVENT = "scanprof:dictionaries-changed";
@@ -22,7 +21,6 @@
   document.addEventListener("DOMContentLoaded", init);
 
   function init() {
-    alert("dictionary init called");
     console.log("[ScanProf Dictionary] init called");
     console.debug("[ScanProf Dictionary] init start", { hasApi: !!api });
     refs.openBtn = document.getElementById("ai-dictionary-open-btn");
@@ -111,7 +109,6 @@
   }
 
   function openModal(activityName) {
-    alert("openModal called");
     if (!refs.modal) return;
     console.debug("[ScanProf Dictionary] openModal", { activityName: activityName || null });
     refs.modal.classList.remove("sp-hidden");
@@ -124,23 +121,15 @@
   }
 
   function renderModal(activityName) {
-    alert("renderModal called");
     console.debug("[ScanProf Dictionary] renderModal", { incomingActivity: activityName || null });
     try {
-      alert("renderModal step 1");
       state.currentActivityName = activityName || state.currentActivityName || getCurrentActivityName();
-      alert("renderModal step 2");
       renderCurrentSection(state.currentActivityName);
-      alert("about to call renderSelector");
       renderSelector();
-      alert("renderSelector finished");
       toggleEditor(false);
-      alert("renderModal step 3");
       setFeedback("");
-      alert("renderModal step 4");
     } catch (err) {
       console.error("[ScanProf Dictionary] renderModal failed", err);
-      alert("renderModal error: " + (err?.message || err));
     }
   }
 
@@ -190,7 +179,6 @@
   }
 
   function renderSelector() {
-    alert("renderSelector called");
     console.log("[ScanProf Dictionary] renderSelector running");
     if (!refs.select) {
       console.error("[ScanProf Dictionary] refs.select introuvable.");
