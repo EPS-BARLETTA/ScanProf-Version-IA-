@@ -1,6 +1,7 @@
 (function () {
   const OPEN_EVENT = "scanprof:open-dictionary";
   const DICTIONARY_EVENT = "scanprof:dictionaries-changed";
+  const STATE_EVENT = "scanprof:dictionary-state-changed";
   const AI_CONTEXT_KEY = "scanprof_ai_context";
   const api = window.ScanProfAIDictionaries;
   if (!api) return;
@@ -52,6 +53,11 @@
     refs.importBtn = document.getElementById("ai-dictionary-import-btn");
     refs.importInput = document.getElementById("ai-dictionary-import-input");
     refs.feedback = document.getElementById("ai-dictionary-feedback");
+    refs.detectedLabel = document.getElementById("ai-dictionary-detected-label");
+    refs.appliedLabel = document.getElementById("ai-dictionary-applied-label");
+    refs.stateComment = document.getElementById("ai-dictionary-state-comment");
+    refs.applyBtn = document.getElementById("ai-dictionary-apply-btn");
+    refs.resetBtn = document.getElementById("ai-dictionary-reset-btn");
 
     if (!refs.modal) return;
 
@@ -72,6 +78,8 @@
     refs.importInput?.addEventListener("change", handleImportFile);
     refs.formName?.addEventListener("input", handleNameInput);
     refs.formId?.addEventListener("input", handleIdInput);
+    refs.applyBtn?.addEventListener("click", handleApplySelected);
+    refs.resetBtn?.addEventListener("click", handleResetManual);
 
     window.addEventListener(OPEN_EVENT, (event) => openModal(event?.detail?.activityName || ""));
     window.addEventListener(DICTIONARY_EVENT, () => {
@@ -81,6 +89,7 @@
         populateForm(api.getDictionaryById(state.editingId));
       }
     });
+    window.addEventListener(STATE_EVENT, () => renderCurrentSection());
 
     renderModal();
   }
@@ -137,6 +146,12 @@
       }
     }
     refs.currentContent.innerHTML = content;
+    updateDictionaryMeta({
+      activityName,
+      dictionary,
+      stateSnapshot: getDictionaryStateSnapshot(),
+    });
+    updateApplyResetControls();
   }
 
   function renderSelector() {
@@ -155,6 +170,7 @@
         .join("");
     state.selectedId = refs.select.value || "";
     renderSelectedDetails();
+    updateApplyResetControls();
   }
 
   function renderSelectedDetails() {
@@ -164,11 +180,13 @@
       refs.selectedDetails.innerHTML = `<p>Sélectionnez une app pour consulter son dictionnaire.</p>`;
       refs.editBtn.disabled = true;
       refs.removeBtn.disabled = true;
+      updateApplyResetControls();
       return;
     }
     refs.selectedDetails.innerHTML = renderDictionaryDetails(dictionary);
     refs.editBtn.disabled = false;
     refs.removeBtn.disabled = dictionary.source !== "custom";
+    updateApplyResetControls();
   }
 
   function renderDictionaryDetails(dict) {
@@ -228,9 +246,86 @@
     return `<div><strong>${escapeHtml(title)}</strong><ul>${items}</ul></div>`;
   }
 
+  function handleApplySelected() {
+    if (!state.selectedId) {
+      setFeedback("Choisissez un dictionnaire avant de l’appliquer.", "error");
+      return;
+    }
+    const manager = window.ScanProfDictionaryState;
+    if (!manager || typeof manager.applyForCurrentContext !== "function") {
+      setFeedback("Application du référentiel impossible (contexte manquant).", "error");
+      return;
+    }
+    const result = manager.applyForCurrentContext(state.selectedId);
+    if (!result?.success) {
+      setFeedback(result?.message || "Impossible d’appliquer ce référentiel.", "error");
+      return;
+    }
+    const dictionary = api.getDictionaryById(state.selectedId);
+    setFeedback(`Référentiel ${dictionary?.label || state.selectedId} appliqué à cette séance.`, "success");
+    renderCurrentSection();
+    renderSelector();
+  }
+
+  function handleResetManual() {
+    const manager = window.ScanProfDictionaryState;
+    if (!manager || typeof manager.clearForCurrentContext !== "function") {
+      setFeedback("Impossible de revenir à la détection automatique.", "error");
+      return;
+    }
+    const result = manager.clearForCurrentContext();
+    if (!result?.success) {
+      setFeedback(result?.message || "Impossible de réinitialiser le référentiel.", "error");
+      return;
+    }
+    setFeedback("Retour à la détection automatique.", "success");
+    renderCurrentSection();
+    renderSelector();
+  }
+
+  function getDictionaryStateSnapshot() {
+    const context = getStoredAIContext();
+    const manager = window.ScanProfDictionaryState;
+    if (!context || !manager || typeof manager.getStateForContext !== "function") return { manual: null, auto: null };
+    return manager.getStateForContext(context) || { manual: null, auto: null };
+  }
+
+  function updateDictionaryMeta({ activityName, dictionary, stateSnapshot }) {
+    if (!refs.detectedLabel && !refs.appliedLabel) return;
+    const manualEntry = stateSnapshot?.manual;
+    const autoEntry = stateSnapshot?.auto;
+    const detectedText = activityName || autoEntry?.activityName || "—";
+    if (refs.detectedLabel) refs.detectedLabel.textContent = `Activité détectée : ${escapeHtml(detectedText || "—")}`;
+    const manualLabel = manualEntry?.dictionary?.label || manualEntry?.label || "";
+    const autoLabel = autoEntry?.label || dictionary?.label || "";
+    if (refs.appliedLabel) {
+      if (manualLabel) refs.appliedLabel.textContent = `Référentiel appliqué : ${manualLabel} (manuel)`;
+      else if (autoLabel) refs.appliedLabel.textContent = `Référentiel appliqué : ${autoLabel} (auto)`;
+      else refs.appliedLabel.textContent = "Référentiel appliqué : Aucun (mode générique)";
+    }
+    if (refs.stateComment) {
+      if (manualLabel && autoLabel && autoLabel !== manualLabel) {
+        refs.stateComment.textContent = `La détection automatique proposait ${autoLabel}.`;
+      } else if (manualLabel) {
+        refs.stateComment.textContent = "Le référentiel manuel prime sur la détection.";
+      } else if (autoLabel) {
+        refs.stateComment.textContent = "Référentiel issu de la détection automatique.";
+      } else {
+        refs.stateComment.textContent = "Aucun référentiel appliqué pour l’instant.";
+      }
+    }
+  }
+
+  function updateApplyResetControls(snapshot) {
+    const stateSnapshot = snapshot || getDictionaryStateSnapshot();
+    if (refs.applyBtn) refs.applyBtn.disabled = !state.selectedId;
+    if (refs.resetBtn) refs.resetBtn.disabled = !stateSnapshot?.manual;
+  }
+
   function handleSelectChange() {
     state.selectedId = refs.select?.value || "";
     renderSelectedDetails();
+    updateApplyResetControls();
   }
 
   function handleCurrentAddClick() {

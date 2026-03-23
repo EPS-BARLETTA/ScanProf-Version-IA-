@@ -5,6 +5,8 @@
     NOTES: "scanprof_ai_notes",
     PROVIDER: "scanprof_ai_provider",
     INTERPRETATION: "scanprof_ai_interpretation_hints",
+    MANUAL_DICTIONARIES: "scanprof_ai_manual_dictionary_map",
+    AUTO_DICTIONARIES: "scanprof_ai_auto_dictionary_map",
   };
   const AI_CONTEXT_KEY = "scanprof_ai_context";
   const PROVIDERS = {
@@ -65,6 +67,7 @@
     Erreur: "⚠️",
   };
   const DICTIONARY_EVENT = "scanprof:dictionaries-changed";
+  const DICTIONARY_STATE_EVENT = "scanprof:dictionary-state-changed";
   const OPEN_DICTIONARY_EVENT = "scanprof:open-dictionary";
   const MAX_TOTAL_COLUMNS = 18;
 
@@ -201,6 +204,155 @@
     if (!api || typeof api.getDictionaryForActivity !== "function") return null;
     return api.getDictionaryForActivity(activityName);
   }
+
+  function getDictionaryByIdSafe(id) {
+    if (!id) return null;
+    const api = window.ScanProfAIDictionaries;
+    if (!api || typeof api.getDictionaryById !== "function") return null;
+    return api.getDictionaryById(id);
+  }
+
+  function getContextScopeKey(context = {}) {
+    const classe = slug(String(context.classe || context.className || "").trim() || "classe");
+    const activite = slug(String(context.activite || context.activityName || "").trim() || "activite");
+    return `${classe}::${activite}`;
+  }
+
+  function loadManualDictionaryMap() {
+    try {
+      const raw = localStorage.getItem(STORAGE.MANUAL_DICTIONARIES);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveManualDictionaryMap(map) {
+    try {
+      localStorage.setItem(STORAGE.MANUAL_DICTIONARIES, JSON.stringify(map || {}));
+    } catch {
+      /* noop */
+    }
+  }
+
+  function loadAutoDictionaryMap() {
+    try {
+      const raw = localStorage.getItem(STORAGE.AUTO_DICTIONARIES);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveAutoDictionaryMap(map) {
+    try {
+      localStorage.setItem(STORAGE.AUTO_DICTIONARIES, JSON.stringify(map || {}));
+    } catch {
+      /* noop */
+    }
+  }
+
+  function getManualDictionaryEntry(context = {}) {
+    const key = getContextScopeKey(context);
+    if (!key) return null;
+    const map = loadManualDictionaryMap();
+    const entry = map[key];
+    if (!entry || !entry.dictionaryId) return null;
+    const dictionary = getDictionaryByIdSafe(entry.dictionaryId);
+    if (!dictionary) return null;
+    return { ...entry, dictionary };
+  }
+
+  function getAutoDictionaryEntry(context = {}) {
+    const key = getContextScopeKey(context);
+    if (!key) return null;
+    const map = loadAutoDictionaryMap();
+    return map[key] || null;
+  }
+
+  function applyManualDictionary(dictionaryId, context) {
+    const key = getContextScopeKey(context);
+    if (!key) {
+      return { success: false, message: "Contexte de séance introuvable." };
+    }
+    if (!dictionaryId) {
+      return clearManualDictionary(context);
+    }
+    const dictionary = getDictionaryByIdSafe(dictionaryId);
+    if (!dictionary) {
+      return { success: false, message: "Dictionnaire introuvable." };
+    }
+    const map = loadManualDictionaryMap();
+    map[key] = {
+      dictionaryId,
+      label: dictionary.label || dictionaryId,
+      appliedAt: new Date().toISOString(),
+      activityName: context?.activite || context?.activityName || "",
+    };
+    saveManualDictionaryMap(map);
+    emitDictionaryStateChange({ type: "manual_apply", scope: key, dictionaryId, label: dictionary.label || dictionaryId });
+    return { success: true, entry: map[key], dictionary };
+  }
+
+  function clearManualDictionary(context) {
+    const key = getContextScopeKey(context);
+    if (!key) return { success: false, message: "Contexte de séance introuvable." };
+    const map = loadManualDictionaryMap();
+    if (map[key]) {
+      delete map[key];
+      saveManualDictionaryMap(map);
+      emitDictionaryStateChange({ type: "manual_clear", scope: key });
+    }
+    return { success: true };
+  }
+
+  function rememberAutoDictionary(context, dictionary) {
+    const key = getContextScopeKey(context);
+    if (!key) return;
+    const map = loadAutoDictionaryMap();
+    map[key] = {
+      dictionaryId: dictionary?.id || null,
+      label: dictionary?.label || "",
+      detectedAt: new Date().toISOString(),
+      activityName: context?.activite || context?.activityName || "",
+    };
+    saveAutoDictionaryMap(map);
+    emitDictionaryStateChange({ type: "auto_detected", scope: key, dictionaryId: map[key].dictionaryId, label: map[key].label });
+  }
+
+  function emitDictionaryStateChange(detail) {
+    try {
+      window.dispatchEvent(
+        new CustomEvent(DICTIONARY_STATE_EVENT, {
+          detail: detail || {},
+        })
+      );
+    } catch {
+      /* noop */
+    }
+  }
+
+  window.ScanProfDictionaryState = {
+    applyForCurrentContext(dictionaryId) {
+      const context = getStoredAIContext();
+      if (!context) return { success: false, message: "Aucune séance chargée." };
+      return applyManualDictionary(dictionaryId, context);
+    },
+    clearForCurrentContext() {
+      const context = getStoredAIContext();
+      if (!context) return { success: false, message: "Aucune séance chargée." };
+      return clearManualDictionary(context);
+    },
+    getStateForContext(context) {
+      const manual = context ? getManualDictionaryEntry(context) : null;
+      const auto = context ? getAutoDictionaryEntry(context) : null;
+      return { manual, auto };
+    },
+    getStateForStoredContext() {
+      const context = getStoredAIContext();
+      return context ? this.getStateForContext(context) : { manual: null, auto: null };
+    },
+  };
 
   function buildInterpretationSupport({ columns = [], activityName = "", manualText = "", dictionary = null }) {
     const cleanColumns = (columns || []).map((col) => (col == null ? "" : String(col))).filter(Boolean);
@@ -393,31 +545,58 @@
       refs.dictionaryHint.addEventListener("click", handleDictionaryHintClick);
     }
     window.addEventListener(DICTIONARY_EVENT, () => refreshDictionaryHint());
+    window.addEventListener(DICTIONARY_STATE_EVENT, () => refreshDictionaryHint());
   }
 
-  function refreshDictionaryHint(activityName, coverage) {
+  function refreshDictionaryHint(activityName, coverage, dictionaryInfo) {
     if (!refs.dictionaryHint) return;
     const storedContext = getStoredAIContext();
     const target = (activityName || "").trim() || lastActivityName || storedContext.activite || "";
     if (target) lastActivityName = target;
-    const dictionary = target ? getActivityDictionary(target) : null;
     if (coverage) lastDictionaryCoverage = coverage;
     const currentCoverage = coverage || lastDictionaryCoverage || null;
+    const stateApi = window.ScanProfDictionaryState;
+    const stateSnapshot =
+      dictionaryInfo ||
+      (stateApi && typeof stateApi.getStateForStoredContext === "function" ? stateApi.getStateForStoredContext() : null);
+    let manualEntry = null;
+    let autoEntry = null;
+    let dictionary = null;
+    if (stateSnapshot && stateSnapshot.manual) manualEntry = stateSnapshot.manual;
+    if (stateSnapshot && stateSnapshot.auto) autoEntry = stateSnapshot.auto;
+    if (dictionaryInfo && dictionaryInfo.label) {
+      dictionary = { label: dictionaryInfo.label };
+    }
+    if (!dictionary && manualEntry?.dictionaryId) {
+      dictionary = getDictionaryByIdSafe(manualEntry.dictionaryId) || { label: manualEntry.dictionary?.label || manualEntry.label };
+    }
+    if (!dictionary && autoEntry?.dictionaryId) {
+      dictionary = getDictionaryByIdSafe(autoEntry.dictionaryId) || { label: autoEntry.label };
+    }
+    if (!dictionary && target) {
+      dictionary = getActivityDictionary(target);
+    }
     const unknownCount = currentCoverage?.unknown?.length || 0;
-    const status = dictionary ? (unknownCount > 0 ? "partial" : "documented") : "none";
+    const manualActive = !!manualEntry?.dictionaryId;
+    const autoLabel = autoEntry?.label || "";
     if (dictionary) {
       const baseLabel = dictionary.label || dictionary.id || "Activité";
-      const badge =
-        status === "partial"
-          ? "<em>référentiel partiel</em>"
-          : dictionary.source === "custom"
-          ? "personnalisé"
-          : "par défaut";
+      const badge = manualActive
+        ? "manuel"
+        : unknownCount > 0
+        ? "référentiel partiel"
+        : dictionary.source === "custom"
+        ? "par défaut"
+        : "auto";
       const suffix = unknownCount > 0 ? ` — ${unknownCount} code(s) à documenter.` : "";
-      refs.dictionaryHint.innerHTML = `📘 Référentiel chargé : <strong>${escapeHtml(baseLabel)}</strong> (${badge})${suffix}`;
+      const autoNote = manualActive && autoLabel && autoLabel !== baseLabel ? ` (détection : ${escapeHtml(autoLabel)})` : "";
+      refs.dictionaryHint.innerHTML = `📘 Référentiel ${manualActive ? "manuel" : "chargé"} : <strong>${escapeHtml(
+        baseLabel
+      )}</strong> (${badge})${suffix}${autoNote}`;
       refs.dictionaryHint.classList.remove("ai-dictionary-hint--empty");
-      refs.dictionaryHint.dataset.state = "loaded";
+      refs.dictionaryHint.dataset.state = manualActive ? "manual" : unknownCount > 0 ? "partial" : "loaded";
       refs.dictionaryHint.setAttribute("aria-live", "polite");
+      updateDictionaryAlert(currentCoverage);
     } else {
       const message = target
         ? `Aucun dictionnaire n’est encore configuré pour cette activité.`
@@ -426,8 +605,6 @@
       refs.dictionaryHint.classList.add("ai-dictionary-hint--empty");
       refs.dictionaryHint.dataset.state = "empty";
       refs.dictionaryHint.setAttribute("aria-live", "polite");
-      updateDictionaryAlert(currentCoverage);
-    } else {
       updateDictionaryAlert(null);
     }
   }
@@ -611,8 +788,12 @@
       const storedContext = getStoredAIContext();
       const summary = summarizeDataset();
       const manualInterpretation = refs.interpretationField?.value || localStorage.getItem(STORAGE.INTERPRETATION) || "";
-      const dictionaryMatch = getActivityDictionary(currentContext.activityName || storedContext.activite || "");
-      const retentionPlan = buildColumnRetentionPlan(summary.columns || [], dictionaryMatch, manualInterpretation);
+      const autoDictionary = getActivityDictionary(currentContext.activityName || storedContext.activite || "");
+      rememberAutoDictionary(storedContext, autoDictionary);
+      const manualEntry = getManualDictionaryEntry(storedContext);
+      const manualDictionary = manualEntry?.dictionary || null;
+      const dictionaryToUse = manualDictionary || autoDictionary;
+      const retentionPlan = buildColumnRetentionPlan(summary.columns || [], dictionaryToUse, manualInterpretation);
       const sliced = dataset.slice(0, MAX_ELEVES).map((entry) => cleanEntry(entry, retentionPlan));
       logDebug("Dataset trimmed", {
         originalCount: dataset.length,
@@ -640,11 +821,15 @@
         dictionaryInfo: null,
         preAnalysis: null,
       };
-      if (dictionaryMatch) {
+      if (dictionaryToUse) {
         currentContext.dictionaryInfo = {
-          id: dictionaryMatch.id,
-          label: dictionaryMatch.label || dictionaryMatch.id || "Activité",
-          source: dictionaryMatch.source || "default",
+          id: dictionaryToUse.id,
+          label: dictionaryToUse.label || dictionaryToUse.id || "Activité",
+          source: manualEntry ? "manual" : dictionaryToUse.source || "default",
+          manualDictionaryId: manualEntry?.dictionaryId || null,
+          manualLabel: manualEntry?.dictionary?.label || manualEntry?.label || null,
+          autoDictionaryId: autoDictionary?.id || null,
+          autoLabel: autoDictionary?.label || null,
         };
       }
       const interpretationEngine = window.ScanProfAIInterpretationEngine;
@@ -652,7 +837,7 @@
         ? interpretationEngine.analyze({
             dataset: sliced,
             columns: summary.columns || [],
-            dictionary: dictionaryMatch,
+            dictionary: dictionaryToUse,
             manualText: manualInterpretation,
             summary,
           })
@@ -661,13 +846,17 @@
       if (preAnalysis?.coverage && currentContext.dictionaryInfo) {
         currentContext.dictionaryInfo.coverage = preAnalysis.coverage;
       }
-      refreshDictionaryHint(currentContext.activityName || storedContext.activite || "", preAnalysis?.coverage);
-      updateDictionaryAlert(dictionaryMatch ? preAnalysis?.coverage : null);
+      refreshDictionaryHint(
+        currentContext.activityName || storedContext.activite || "",
+        preAnalysis?.coverage,
+        currentContext.dictionaryInfo
+      );
+      updateDictionaryAlert(dictionaryToUse ? preAnalysis?.coverage : null);
       const interpretationSupport = buildInterpretationSupport({
         columns: summary.columns || [],
         activityName: currentContext.activityName || "",
         manualText: manualInterpretation,
-        dictionary: dictionaryMatch,
+        dictionary: dictionaryToUse,
       });
       lastQuestionText = intent === "question" ? (questionText || "").trim() : "";
       const analysisInput = {
@@ -1007,10 +1196,20 @@
       lines.push(`<div class="ai-context__line">🕒 ${escapeHtml(date.toLocaleString())}</div>`);
     }
     if (meta.dictionaryInfo?.label) {
-      const sourceLabel = meta.dictionaryInfo.source === "custom" ? "personnalisé" : "par défaut";
+      const sourceLabel =
+        meta.dictionaryInfo.manualDictionaryId && meta.dictionaryInfo.manualLabel
+          ? "manuel"
+          : meta.dictionaryInfo.source === "custom"
+          ? "par défaut"
+          : "auto";
       lines.push(
         `<div class="ai-context__line">📘 Référentiel : ${escapeHtml(meta.dictionaryInfo.label)} (${sourceLabel})</div>`
       );
+      if (meta.dictionaryInfo.manualDictionaryId && meta.dictionaryInfo.autoLabel && meta.dictionaryInfo.autoLabel !== meta.dictionaryInfo.manualLabel) {
+        lines.push(
+          `<div class="ai-context__line">🧭 Détection automatique : ${escapeHtml(meta.dictionaryInfo.autoLabel)}</div>`
+        );
+      }
       const coverage = meta.dictionaryInfo.coverage;
       if (coverage) {
         const unknownCount = coverage.unknown?.length || 0;

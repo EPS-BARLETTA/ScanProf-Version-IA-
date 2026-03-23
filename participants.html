@@ -111,6 +111,8 @@
     .ai-dictionary-details{border:1px solid var(--sp-border);border-radius:12px;padding:12px;background:var(--sp-table-even);font-size:0.9rem;}
     .ai-dictionary-details__grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;}
     .ai-dictionary-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:999px;font-size:0.75rem;background:var(--sp-table-odd);border:1px solid var(--sp-border);}
+    .ai-dictionary-current-meta{margin-top:10px;font-size:0.85rem;color:var(--sp-muted);display:flex;flex-direction:column;gap:4px;}
+    .ai-dictionary-select-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
     .ai-dictionary-editor form{display:grid;gap:10px;}
     .ai-dictionary-field{display:flex;flex-direction:column;gap:4px;font-size:0.9rem;}
     .ai-dictionary-field input,
@@ -322,6 +324,11 @@
           <div class="ai-dictionary-details" id="ai-dictionary-current-content">
             <p>Aucune activité détectée.</p>
           </div>
+          <div class="ai-dictionary-current-meta">
+            <p id="ai-dictionary-detected-label">Activité détectée : —</p>
+            <p id="ai-dictionary-applied-label">Référentiel appliqué : —</p>
+            <p id="ai-dictionary-state-comment"></p>
+          </div>
         </section>
         <section class="ai-dictionary-section">
           <div class="ai-dictionary-section__head">
@@ -338,6 +345,10 @@
                 <option value="">Sélectionner...</option>
               </select>
             </label>
+          </div>
+          <div class="ai-dictionary-select-actions">
+            <button type="button" class="ai-btn primary" id="ai-dictionary-apply-btn" disabled>Appliquer à cette séance</button>
+            <button type="button" class="ai-btn outline" id="ai-dictionary-reset-btn" disabled>Revenir à la détection automatique</button>
           </div>
           <div id="ai-dictionary-selected-details" class="ai-dictionary-details"></div>
         </section>
