@@ -178,38 +178,25 @@
       console.error("[ScanProf Dictionary] refs.select introuvable.");
       return;
     }
-    console.debug("[ScanProf Dictionary] select before", {
-      node: refs.select,
-      outerHTML: refs.select.outerHTML,
-    });
     const previous = refs.select.value || state.selectedId || "";
-    let dictionaries = getCatalogueDictionaries()
-      .slice()
-      .sort((a, b) => (a.label || "").localeCompare(b.label || ""));
-    if (!dictionaries.length) {
-      dictionaries = getDefaultCatalogue();
-    }
-    console.debug("[ScanProf Dictionary] renderSelector dictionaries", {
-      previous,
-      dictionaryCount: dictionaries.length,
-      labels: dictionaries.map((dict) => dict.label || dict.id),
-    });
-    let optionsHtml = `<option value="">Sélectionner...</option>`;
-    const mappedOptions = dictionaries
-      .map((dict) => buildOptionMarkup(dict, previous))
+    const forcedOptions = [
+      { id: "", label: "Sélectionner...", selected: previous === "" },
+      { id: "cross_training", label: "Cross Training", selected: previous === "cross_training" },
+      { id: "climb_track", label: "Climb Track", selected: previous === "climb_track" },
+      { id: "arcathlon_v2", label: "ArcAthlon V2", selected: previous === "arcathlon_v2" },
+      { id: "laser_run", label: "Laser Run", selected: previous === "laser_run" },
+    ]
+      .map(
+        (entry, index) =>
+          `<option value="${escapeHtml(entry.id)}"${entry.selected || (index === 0 && !previous) ? " selected" : ""}>${escapeHtml(entry.label)}</option>`
+      )
       .join("");
-    if (!mappedOptions) {
-      console.warn("[ScanProf Dictionary] Aucun dictionnaire disponible, injection fallback statique.");
-      optionsHtml += buildStaticFallbackOptions(previous);
-    } else {
-      optionsHtml += mappedOptions;
-    }
-    refs.select.innerHTML = optionsHtml;
+    refs.select.innerHTML = forcedOptions;
     state.selectedId = refs.select.value || "";
-    console.debug("[ScanProf Dictionary] renderSelector result", {
-      selectedId: state.selectedId,
-      selectHtmlLength: refs.select.innerHTML.length,
+    console.debug("[ScanProf Dictionary] forced select content", {
       outerHTML: refs.select.outerHTML,
+      optionsLength: refs.select.options.length,
+      selectedId: state.selectedId,
     });
     renderSelectedDetails();
     updateApplyResetControls();
