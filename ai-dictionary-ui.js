@@ -126,13 +126,22 @@
   function renderModal(activityName) {
     alert("renderModal called");
     console.debug("[ScanProf Dictionary] renderModal", { incomingActivity: activityName || null });
-    state.currentActivityName = activityName || state.currentActivityName || getCurrentActivityName();
-    renderCurrentSection(state.currentActivityName);
-    alert("about to call renderSelector");
-    renderSelector();
-    alert("renderSelector finished");
-    toggleEditor(false);
-    setFeedback("");
+    try {
+      alert("renderModal step 1");
+      state.currentActivityName = activityName || state.currentActivityName || getCurrentActivityName();
+      alert("renderModal step 2");
+      renderCurrentSection(state.currentActivityName);
+      alert("about to call renderSelector");
+      renderSelector();
+      alert("renderSelector finished");
+      toggleEditor(false);
+      alert("renderModal step 3");
+      setFeedback("");
+      alert("renderModal step 4");
+    } catch (err) {
+      console.error("[ScanProf Dictionary] renderModal failed", err);
+      alert("renderModal error: " + (err?.message || err));
+    }
   }
 
   function renderCurrentSection(activityNameOverride) {
