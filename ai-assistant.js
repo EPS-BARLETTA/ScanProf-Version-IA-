@@ -38,7 +38,6 @@
     generic: "Analyse Gemini indisponible pour le moment.",
   };
   const MAX_ELEVES = 60;
-  const MAX_EXTRA_COLUMNS = 4;
   const CORE_COLUMNS = new Set(["nom", "prenom", "classe", "sexe", "distance", "vitesse", "vma", "temps_total"]);
   const INCOMPLETE_RESPONSE_ERROR = "AI_INCOMPLETE_RESPONSE";
   const DEBUG_AI = true;
@@ -67,6 +66,7 @@
   };
   const DICTIONARY_EVENT = "scanprof:dictionaries-changed";
   const OPEN_DICTIONARY_EVENT = "scanprof:open-dictionary";
+  const MAX_TOTAL_COLUMNS = 18;
 
   let refs = {};
   let lastReportText = "";
@@ -76,6 +76,7 @@
   let currentModel = PROVIDERS[DEFAULT_PROVIDER].defaultModel;
   let lastIntent = "bilan";
   let lastQuestionText = "";
+  let lastDictionaryCoverage = null;
   let lastActivityName = "";
 
   document.addEventListener("DOMContentLoaded", initAssistant);
@@ -234,6 +235,24 @@
       if (safeDictionary.notes?.length) {
         guides.push(`Repères activité : ${safeDictionary.notes.join(" ")}`);
       }
+      if (safeDictionary.comparison_rules?.length) {
+        guides.push(`Comparaisons autorisées : ${safeDictionary.comparison_rules.join(" / ")}`);
+      }
+      if (safeDictionary.signal_rules?.length) {
+        guides.push(`Signaux pédagogiques : ${safeDictionary.signal_rules.join(" / ")}`);
+      }
+      if (safeDictionary.limits?.length) {
+        guides.push(`Limites connues : ${safeDictionary.limits.join(" / ")}`);
+      }
+      if (safeDictionary.examples?.length) {
+        guides.push(`Exemples : ${safeDictionary.examples.join(" / ")}`);
+      }
+      if (safeDictionary.teacher_context_required) {
+        guides.push("Cette activité requiert un complément de contexte enseignant.");
+      }
+      if (safeDictionary.confidence && safeDictionary.confidence !== "unknown") {
+        guides.push(`Fiabilité référentiel : ${safeDictionary.confidence}.`);
+      }
     }
     if (trimmedManual) {
       guides.push(`Indications de l'enseignant :\n${trimmedManual}`);
@@ -260,6 +279,13 @@
       levels: Array.isArray(dictionary.levels) ? dictionary.levels.filter(Boolean) : [],
       practices: Array.isArray(dictionary.practices) ? dictionary.practices.filter(Boolean) : [],
       source: dictionary.source || "default",
+      confidence: dictionary.confidence || "unknown",
+      ai_may_infer: Boolean(dictionary.ai_may_infer),
+      teacher_context_required: Boolean(dictionary.teacher_context_required),
+      limits: Array.isArray(dictionary.limits) ? dictionary.limits.filter(Boolean) : [],
+      examples: Array.isArray(dictionary.examples) ? dictionary.examples.filter(Boolean) : [],
+      comparison_rules: Array.isArray(dictionary.comparison_rules) ? dictionary.comparison_rules.filter(Boolean) : [],
+      signal_rules: Array.isArray(dictionary.signal_rules) ? dictionary.signal_rules.filter(Boolean) : [],
     };
   }
 
@@ -284,6 +310,7 @@
       testBtn: document.getElementById("ai-test-key-btn"),
       notesField: document.getElementById("ai-session-notes"),
       interpretationField: document.getElementById("ai-interpretation-notes"),
+      dictionaryAlert: document.getElementById("ai-dictionary-alert"),
       dictionaryHint: document.getElementById("ai-dictionary-hint"),
       keyStatus: document.getElementById("ai-key-status"),
       runStatus: document.getElementById("ai-run-status"),
@@ -368,28 +395,40 @@
     window.addEventListener(DICTIONARY_EVENT, () => refreshDictionaryHint());
   }
 
-  function refreshDictionaryHint(activityName) {
+  function refreshDictionaryHint(activityName, coverage) {
     if (!refs.dictionaryHint) return;
     const storedContext = getStoredAIContext();
     const target = (activityName || "").trim() || lastActivityName || storedContext.activite || "";
     if (target) lastActivityName = target;
     const dictionary = target ? getActivityDictionary(target) : null;
-    const activityLabel = target ? `« ${target} »` : "cette activité";
+    if (coverage) lastDictionaryCoverage = coverage;
+    const currentCoverage = coverage || lastDictionaryCoverage || null;
+    const unknownCount = currentCoverage?.unknown?.length || 0;
+    const status = dictionary ? (unknownCount > 0 ? "partial" : "documented") : "none";
     if (dictionary) {
-      refs.dictionaryHint.innerHTML = `📘 Référentiel chargé : <strong>${escapeHtml(
-        dictionary.label || dictionary.id || "Activité"
-      )}</strong> (${dictionary.source === "custom" ? "personnalisé" : "par défaut"}).`;
+      const baseLabel = dictionary.label || dictionary.id || "Activité";
+      const badge =
+        status === "partial"
+          ? "<em>référentiel partiel</em>"
+          : dictionary.source === "custom"
+          ? "personnalisé"
+          : "par défaut";
+      const suffix = unknownCount > 0 ? ` — ${unknownCount} code(s) à documenter.` : "";
+      refs.dictionaryHint.innerHTML = `📘 Référentiel chargé : <strong>${escapeHtml(baseLabel)}</strong> (${badge})${suffix}`;
       refs.dictionaryHint.classList.remove("ai-dictionary-hint--empty");
       refs.dictionaryHint.dataset.state = "loaded";
       refs.dictionaryHint.setAttribute("aria-live", "polite");
     } else {
       const message = target
-        ? `Cette activité n’a pas encore de dictionnaire d’interprétation.`
+        ? `Aucun dictionnaire n’est encore configuré pour cette activité.`
         : "Associez la séance à une activité pour charger un dictionnaire.";
       refs.dictionaryHint.innerHTML = `${message} <button type="button" class="ai-dictionary-link" data-dictionary-action="open">Ajouter / compléter</button>`;
       refs.dictionaryHint.classList.add("ai-dictionary-hint--empty");
       refs.dictionaryHint.dataset.state = "empty";
       refs.dictionaryHint.setAttribute("aria-live", "polite");
+      updateDictionaryAlert(currentCoverage);
+    } else {
+      updateDictionaryAlert(null);
     }
   }
 
@@ -400,6 +439,19 @@
     if (action === "open") {
       openDictionaryPanel(lastActivityName || getStoredAIContext().activite || "");
     }
+  }
+
+  function updateDictionaryAlert(coverage) {
+    if (!refs.dictionaryAlert) return;
+    if (!coverage || !coverage.unknown || !coverage.unknown.length) {
+      refs.dictionaryAlert.classList.add("sp-hidden");
+      refs.dictionaryAlert.textContent = "";
+      return;
+    }
+    const unknownList = coverage.unknown.slice(0, 5).join(", ");
+    const more = coverage.unknown.length > 5 ? ` +${coverage.unknown.length - 5}` : "";
+    refs.dictionaryAlert.innerHTML = `<strong>Codes à documenter :</strong> ${escapeHtml(unknownList)}${more ? escapeHtml(more) : ""}`;
+    refs.dictionaryAlert.classList.remove("sp-hidden");
   }
 
   function openDictionaryPanel(activityName = "") {
@@ -559,7 +611,9 @@
       const storedContext = getStoredAIContext();
       const summary = summarizeDataset();
       const manualInterpretation = refs.interpretationField?.value || localStorage.getItem(STORAGE.INTERPRETATION) || "";
-      const sliced = dataset.slice(0, MAX_ELEVES).map(cleanEntry);
+      const dictionaryMatch = getActivityDictionary(currentContext.activityName || storedContext.activite || "");
+      const retentionPlan = buildColumnRetentionPlan(summary.columns || [], dictionaryMatch, manualInterpretation);
+      const sliced = dataset.slice(0, MAX_ELEVES).map((entry) => cleanEntry(entry, retentionPlan));
       logDebug("Dataset trimmed", {
         originalCount: dataset.length,
         sentCount: sliced.length,
@@ -584,8 +638,8 @@
         updatedAt:
           (summary.meta && (summary.meta.updatedAt || summary.meta.savedAt)) || new Date().toISOString(),
         dictionaryInfo: null,
+        preAnalysis: null,
       };
-      const dictionaryMatch = getActivityDictionary(currentContext.activityName || storedContext.activite || "");
       if (dictionaryMatch) {
         currentContext.dictionaryInfo = {
           id: dictionaryMatch.id,
@@ -593,7 +647,22 @@
           source: dictionaryMatch.source || "default",
         };
       }
-      refreshDictionaryHint(currentContext.activityName || storedContext.activite || "");
+      const interpretationEngine = window.ScanProfAIInterpretationEngine;
+      const preAnalysis = interpretationEngine
+        ? interpretationEngine.analyze({
+            dataset: sliced,
+            columns: summary.columns || [],
+            dictionary: dictionaryMatch,
+            manualText: manualInterpretation,
+            summary,
+          })
+        : null;
+      currentContext.preAnalysis = preAnalysis;
+      if (preAnalysis?.coverage && currentContext.dictionaryInfo) {
+        currentContext.dictionaryInfo.coverage = preAnalysis.coverage;
+      }
+      refreshDictionaryHint(currentContext.activityName || storedContext.activite || "", preAnalysis?.coverage);
+      updateDictionaryAlert(dictionaryMatch ? preAnalysis?.coverage : null);
       const interpretationSupport = buildInterpretationSupport({
         columns: summary.columns || [],
         activityName: currentContext.activityName || "",
@@ -611,12 +680,14 @@
           intent,
           lastQuestionText,
           storedContext,
-          interpretationSupport
+          interpretationSupport,
+          preAnalysis
         ),
         eleves: sliced,
         intent,
         questionText: lastQuestionText,
         interpretation: interpretationSupport,
+        pre_analysis: preAnalysis,
       };
       const builder = window.ScanProfAIPrompt;
       if (!builder || typeof builder.buildPrompt !== "function") {
@@ -662,7 +733,8 @@
     intent,
     questionText,
     storedContext,
-    interpretationSupport
+    interpretationSupport,
+    preAnalysis
   ) {
     const meta = summary.meta || {};
     const bestClass = meta?.className || summary.classes?.[0]?.name || "";
@@ -687,6 +759,7 @@
     if (interpretationSupport?.guides?.length) info.aide_interpretation = interpretationSupport.guides;
     if (interpretationSupport?.dictionary) info.dictionnaire_activite = interpretationSupport.dictionary;
     if (interpretationSupport?.manual) info.indications_enseignant_interpretation = interpretationSupport.manual;
+    if (preAnalysis) info.pre_analysis = preAnalysis;
     if (totalEntries > usedEntries) {
       info.tronque = `Seuls ${usedEntries} élèves sur ${totalEntries} ont été envoyés pour limiter la taille du prompt.`;
     }
@@ -938,6 +1011,12 @@
       lines.push(
         `<div class="ai-context__line">📘 Référentiel : ${escapeHtml(meta.dictionaryInfo.label)} (${sourceLabel})</div>`
       );
+      const coverage = meta.dictionaryInfo.coverage;
+      if (coverage) {
+        const unknownCount = coverage.unknown?.length || 0;
+        const partialNote = unknownCount > 0 ? `${unknownCount} code(s) à documenter` : "Référentiel complet";
+        lines.push(`<div class="ai-context__line">📊 ${partialNote}</div>`);
+      }
     }
     if (!lines.length) {
       logDebug("Modal context hidden (no lines)");
@@ -1123,40 +1202,89 @@
     return DEFAULT_PROVIDER;
   }
 
-  function cleanEntry(entry) {
+  function cleanEntry(entry, retentionPlan) {
     if (!entry || typeof entry !== "object") return entry;
     const clone = {};
     Object.keys(entry).forEach((key) => {
       if (key.startsWith("__")) return;
       clone[key] = entry[key];
     });
-    return compactEntry(clone);
+    return compactEntry(clone, retentionPlan);
   }
 
-  function compactEntry(entry) {
+  function compactEntry(entry, plan) {
     if (!entry || typeof entry !== "object") return entry;
-    const essentials = [
-      "nom",
-      "prenom",
-      "classe",
-      "sexe",
-      "distance",
-      "vitesse",
-      "vma",
-      "temps_total",
-    ];
+    if (!plan) return entry;
+    const protectedSet = plan.protected || new Set(CORE_COLUMNS);
     const result = {};
-    essentials.forEach((field) => {
-      if (entry[field] != null && entry[field] !== "") result[field] = entry[field];
-    });
-    let extrasAdded = 0;
+    const optional = [];
     Object.keys(entry).forEach((key) => {
-      if (essentials.includes(key)) return;
-      if (extrasAdded >= MAX_EXTRA_COLUMNS) return;
-      result[key] = entry[key];
-      extrasAdded += 1;
+      if (key.startsWith("__")) return;
+      const normalized = normalizeColumnKey(key);
+      if (protectedSet.has(normalized)) {
+        result[key] = entry[key];
+        return;
+      }
+      optional.push({ key });
     });
+    const limit = plan.limit || MAX_TOTAL_COLUMNS;
+    if (limit <= 0) return result;
+    let count = Object.keys(result).length;
+    if (count >= limit) return result;
+    for (const item of optional) {
+      if (count >= limit) break;
+      result[item.key] = entry[item.key];
+      count += 1;
+    }
     return result;
+  }
+
+  function buildColumnRetentionPlan(columns = [], dictionary = null, manualText = "") {
+    const plan = {
+      protected: new Set(CORE_COLUMNS),
+      limit: MAX_TOTAL_COLUMNS,
+    };
+    const manualTokens =
+      (window.ScanProfAIInterpretationEngine && window.ScanProfAIInterpretationEngine.extractManualTokens(manualText)) ||
+      new Set();
+    manualTokens.forEach((token) => plan.protected.add(token));
+    const dictionaryKeys = new Set(
+      Object.keys(dictionary?.abbreviations || {}).map((key) => normalizeColumnKey(key)).filter(Boolean)
+    );
+    const suffixes = Object.keys(dictionary?.suffixes || {});
+    (columns || []).forEach((col) => {
+      const normalized = normalizeColumnKey(col);
+      if (!normalized || plan.protected.has(normalized)) return;
+      if (dictionaryKeys.has(normalized)) {
+        plan.protected.add(normalized);
+        return;
+      }
+      const base = stripSuffixForPlan(normalized, suffixes);
+      if (base && dictionaryKeys.has(base)) {
+        plan.protected.add(normalized);
+        return;
+      }
+      if (manualTokens.has(normalized)) {
+        plan.protected.add(normalized);
+      }
+    });
+    return plan;
+  }
+
+  function normalizeColumnKey(key) {
+    if (!key) return "";
+    return String(key)
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "_");
+  }
+
+  function stripSuffixForPlan(normalized, suffixes = []) {
+    if (!normalized || !suffixes.length) return null;
+    const match = suffixes.find((suffix) => normalized.endsWith(suffix));
+    if (!match) return null;
+    const base = normalized.slice(0, normalized.length - match.length);
+    return base || null;
   }
 
   function getApiKey() {

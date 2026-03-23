@@ -39,6 +39,13 @@
     refs.formLevels = document.getElementById("dict-app-levels");
     refs.formInterpretation = document.getElementById("dict-app-interpretation");
     refs.formNotes = document.getElementById("dict-app-notes");
+    refs.formConfidence = document.getElementById("dict-app-confidence");
+    refs.formInfer = document.getElementById("dict-app-aiinfer");
+    refs.formTeacherContext = document.getElementById("dict-app-teacher-context");
+    refs.formLimits = document.getElementById("dict-app-limits");
+    refs.formExamples = document.getElementById("dict-app-examples");
+    refs.formComparisons = document.getElementById("dict-app-comparisons");
+    refs.formSignals = document.getElementById("dict-app-signals");
     refs.formStatus = document.getElementById("dict-form-status");
     refs.formCancel = document.getElementById("dict-form-cancel");
     refs.exportBtn = document.getElementById("ai-dictionary-export-btn");
@@ -168,7 +175,13 @@
     if (!dict) {
       return `<p>Aucune donnée disponible.</p>`;
     }
-    const chips = `<span class="ai-dictionary-chip">${dict.source === "custom" ? "Personnalisé" : "Défaut"}</span>`;
+    const chipParts = [dict.source === "custom" ? "Personnalisé" : "Défaut"];
+    if (dict.confidence && dict.confidence !== "unknown") {
+      chipParts.push(`Confiance : ${dict.confidence}`);
+    }
+    if (dict.teacher_context_required) chipParts.push("Contexte enseignant requis");
+    if (dict.ai_may_infer) chipParts.push("IA autorisée à déduire");
+    const chips = chipParts.map((label) => `<span class="ai-dictionary-chip">${escapeHtml(label)}</span>`).join(" ");
     const sections = [];
     if (dict.description) sections.push(`<div><strong>Description</strong><p>${escapeHtml(dict.description)}</p></div>`);
     const abbr = renderListFromObject(dict.abbreviations, "Codes");
@@ -186,6 +199,18 @@
     }
     if (dict.notes?.length) {
       sections.push(renderListFromArray(dict.notes, "Notes pédagogiques"));
+    }
+    if (dict.comparison_rules?.length) {
+      sections.push(renderListFromArray(dict.comparison_rules, "Comparaisons autorisées"));
+    }
+    if (dict.signal_rules?.length) {
+      sections.push(renderListFromArray(dict.signal_rules, "Signaux pédagogiques"));
+    }
+    if (dict.limits?.length) {
+      sections.push(renderListFromArray(dict.limits, "Limites / questions"));
+    }
+    if (dict.examples?.length) {
+      sections.push(renderListFromArray(dict.examples, "Exemples"));
     }
     return `${chips}<div class="ai-dictionary-details__grid">${sections.join("") || "<p>Aucune donnée.</p>"}</div>`;
   }
@@ -237,6 +262,13 @@
     refs.formLevels.value = formatListText(dictionary?.levels?.length ? dictionary.levels : dictionary?.practices);
     refs.formInterpretation.value = formatListText(dictionary?.interpretation);
     refs.formNotes.value = formatListText(dictionary?.notes);
+    if (refs.formConfidence) refs.formConfidence.value = dictionary?.confidence || "unknown";
+    if (refs.formInfer) refs.formInfer.checked = !!dictionary?.ai_may_infer;
+    if (refs.formTeacherContext) refs.formTeacherContext.checked = !!dictionary?.teacher_context_required;
+    if (refs.formLimits) refs.formLimits.value = formatListText(dictionary?.limits);
+    if (refs.formExamples) refs.formExamples.value = formatListText(dictionary?.examples);
+    if (refs.formComparisons) refs.formComparisons.value = formatListText(dictionary?.comparison_rules);
+    if (refs.formSignals) refs.formSignals.value = formatListText(dictionary?.signal_rules);
     refs.formStatus.textContent = "";
   }
 
@@ -285,6 +317,13 @@
       interpretation: parseList(refs.formInterpretation?.value || ""),
       notes: parseList(refs.formNotes?.value || ""),
       levels: parseList(refs.formLevels?.value || ""),
+      confidence: refs.formConfidence?.value || "unknown",
+      ai_may_infer: !!refs.formInfer?.checked,
+      teacher_context_required: !!refs.formTeacherContext?.checked,
+      limits: parseList(refs.formLimits?.value || ""),
+      examples: parseList(refs.formExamples?.value || ""),
+      comparison_rules: parseList(refs.formComparisons?.value || ""),
+      signal_rules: parseList(refs.formSignals?.value || ""),
     };
   }
 

@@ -92,6 +92,8 @@
     .ai-dictionary-hint{margin-top:6px;padding:8px 10px;border:1px dashed var(--sp-border);border-radius:10px;background:var(--sp-table-even);font-size:0.85rem;color:var(--sp-text);}
     .ai-dictionary-hint--empty{border-color:var(--sp-accent-orange);background:rgba(255,214,153,0.25);}
     .ai-dictionary-link{border:none;background:none;color:var(--sp-primary);cursor:pointer;font-weight:600;text-decoration:underline;padding:0;margin-left:4px;font-size:0.85rem;}
+    .ai-dictionary-alert{margin-top:4px;padding:6px 10px;border-radius:8px;background:rgba(255,165,0,0.12);border:1px solid rgba(255,165,0,0.4);font-size:0.82rem;color:var(--sp-text);}
+    .ai-dictionary-alert strong{font-weight:600;}
 
     .ai-dictionary-modal{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9500;padding:18px;}
     .ai-dictionary-modal.sp-hidden{display:none;}
@@ -124,6 +126,7 @@
   <script src="participants.js" defer></script>
   <script src="ai-dictionaries.js" defer></script>
   <script src="ai-prompt.js" defer></script>
+  <script src="ai-interpretation-engine.js" defer></script>
   <script src="ai-assistant.js" defer></script>
   <script src="ai-dictionary-ui.js" defer></script>
 </head>
@@ -250,6 +253,7 @@
         <p class="ai-panel__note">Ces indications restent sur cet appareil et aident ponctuellement l’IA.</p>
       </details>
       <div class="ai-dictionary-hint ai-dictionary-hint--empty" id="ai-dictionary-hint">Chargement du référentiel en cours...</div>
+      <div class="ai-dictionary-alert sp-hidden" id="ai-dictionary-alert"></div>
       <div class="ai-actions-grid">
         <button type="button" class="ai-btn primary" id="ai-action-bilan">Bilan de la séance</button>
         <button type="button" class="ai-btn outline" id="ai-action-difficulte">Élèves en difficulté</button>
@@ -375,6 +379,37 @@
             <div class="ai-dictionary-field">
               <label for="dict-app-notes">Notes pédagogiques (une idée par ligne)</label>
               <textarea id="dict-app-notes"></textarea>
+            </div>
+            <div class="ai-dictionary-field">
+              <label for="dict-app-confidence">Niveau de confiance du référentiel</label>
+              <select id="dict-app-confidence">
+                <option value="high">Haute (validé sur le terrain)</option>
+                <option value="medium">Moyenne (repères principaux fiables)</option>
+                <option value="low">Basse (à confirmer)</option>
+                <option value="unknown" selected>Inconnu</option>
+              </select>
+            </div>
+            <div class="ai-dictionary-field">
+              <label><input type="checkbox" id="dict-app-aiinfer"> Autoriser l’IA à déduire prudemment des tendances</label>
+            </div>
+            <div class="ai-dictionary-field">
+              <label><input type="checkbox" id="dict-app-teacher-context"> Ce référentiel nécessite un contexte enseignant</label>
+            </div>
+            <div class="ai-dictionary-field">
+              <label for="dict-app-limits">Limites / questions à poser (une ligne par limite)</label>
+              <textarea id="dict-app-limits"></textarea>
+            </div>
+            <div class="ai-dictionary-field">
+              <label for="dict-app-examples">Exemples métier (une par ligne)</label>
+              <textarea id="dict-app-examples"></textarea>
+            </div>
+            <div class="ai-dictionary-field">
+              <label for="dict-app-comparisons">Comparaisons autorisées (une par ligne)</label>
+              <textarea id="dict-app-comparisons"></textarea>
+            </div>
+            <div class="ai-dictionary-field">
+              <label for="dict-app-signals">Signaux pédagogiques (une par ligne)</label>
+              <textarea id="dict-app-signals"></textarea>
             </div>
             <div class="ai-dictionary-form-actions">
               <button type="submit" class="ai-btn primary">💾 Enregistrer</button>

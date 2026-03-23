@@ -37,6 +37,19 @@
         "Adapter le volume selon le niveau, éviter les écarts trop importants.",
       ],
       levels: ["N1 = parcours allégé", "N2 = parcours complet"],
+      confidence: "medium",
+      ai_may_infer: false,
+      teacher_context_required: false,
+      limits: [
+        "Ne pas déduire la fatigue si aucun code *_r n'est présent.",
+        "Les abréviations ajoutées par l'enseignant priment sur ce dictionnaire.",
+      ],
+      examples: ["bu_r = burpees réalisés", "po_p = pompes prévues sur le plan."],
+      comparison_rules: ["Comparer *_p avec *_r pour repérer les écarts prévu/réalisé."],
+      signal_rules: [
+        "Mettre en avant les élèves qui complètent tous les ateliers prévus.",
+        "Signaler ceux qui restent bloqués sur un même code plusieurs tours.",
+      ],
     },
     climb_track: {
       id: "climb_track",
@@ -88,6 +101,22 @@
         "7A+",
         "Couleurs bloc : Jaune, Vert, Bleu, Rouge, Noir",
       ],
+      confidence: "medium",
+      ai_may_infer: false,
+      teacher_context_required: true,
+      limits: [
+        "Les vitesses doivent être au même format pour être comparées.",
+        "Sans info sur l'assurage, ne pas conclure sur la sécurité.",
+      ],
+      examples: ["Bleu R3 = bloc bleu n°3 tenté/réussi.", "E2 = voie réussie à la 2e tentative."],
+      comparison_rules: [
+        "Comparer les statuts M/MT/T pour suivre l'engagement.",
+        "Comparer vitesse ou cotation seulement si la séance précise les mêmes repères.",
+      ],
+      signal_rules: [
+        "Mettre en avant ceux qui progressent de M vers MT ou T.",
+        "Repérer les répétitions de codes NE/NED2 sur les mêmes voies.",
+      ],
     },
     arcathlon_v2: {
       id: "arcathlon_v2",
@@ -112,6 +141,22 @@
       notes: [
         "Permet de régler durée, longueur de tour, règle Tours → Flèches, et commentaires.",
       ],
+      confidence: "medium",
+      ai_may_infer: false,
+      teacher_context_required: false,
+      limits: [
+        "Sans info sur durée et longueur d'un tour, l'indice Arc reste limité.",
+        "La zone 2 doit être paramétrée pour interpréter zone_entries.",
+      ],
+      examples: ["zone2_points = points marqués dans la zone 2 uniquement."],
+      comparison_rules: [
+        "Comparer points_total vs points_max pour suivre l'efficacité.",
+        "Comparer zone2_points vs zone2_shots pour évaluer la précision.",
+      ],
+      signal_rules: [
+        "Signaler les progressions fortes sur zone2_points.",
+        "Repérer les écarts importants entre nb_0 et zone_entries.",
+      ],
     },
     laser_run: {
       id: "laser_run",
@@ -130,6 +175,18 @@
       ],
       notes: [
         "Penser à signaler les écarts de rythme importants.",
+      ],
+      confidence: "medium",
+      ai_may_infer: false,
+      teacher_context_required: false,
+      limits: [
+        "Les temps de course doivent correspondre à la même distance pour comparaison.",
+      ],
+      examples: ["s1 = premier stand de tir, s2 = second."],
+      comparison_rules: ["Comparer s1 et s2 pour détecter la régularité des tirs."],
+      signal_rules: [
+        "Repérer les élèves stables entre s1 et s2.",
+        "Signaler ceux dont les pénalités explosent d'une boucle à l'autre.",
       ],
     },
   };
@@ -206,6 +263,13 @@
       levels: Array.isArray(dict.levels) ? dict.levels.filter(Boolean) : [],
       practices: Array.isArray(dict.practices) ? dict.practices.filter(Boolean) : [],
       meta: dict.meta || {},
+      confidence: dict.confidence || "unknown",
+      ai_may_infer: Boolean(dict.ai_may_infer),
+      teacher_context_required: Boolean(dict.teacher_context_required),
+      limits: Array.isArray(dict.limits) ? dict.limits.filter(Boolean) : [],
+      examples: Array.isArray(dict.examples) ? dict.examples.filter(Boolean) : [],
+      comparison_rules: Array.isArray(dict.comparison_rules) ? dict.comparison_rules.filter(Boolean) : [],
+      signal_rules: Array.isArray(dict.signal_rules) ? dict.signal_rules.filter(Boolean) : [],
     };
     if (!normalized.id) normalized.id = slugify(normalized.label);
     return normalized;
@@ -230,6 +294,12 @@
       suffixes: { ...(base.suffixes || {}), ...(dict.suffixes || {}) },
       interpretation: [...(base.interpretation || []), ...(dict.interpretation || [])],
       notes: [...(base.notes || []), ...(dict.notes || [])],
+      limits: [...(base.limits || []), ...(dict.limits || [])],
+      examples: [...(base.examples || []), ...(dict.examples || [])],
+      comparison_rules: [...(base.comparison_rules || []), ...(dict.comparison_rules || [])],
+      signal_rules: [...(base.signal_rules || []), ...(dict.signal_rules || [])],
+      levels: [...(base.levels || []), ...(dict.levels || [])],
+      practices: [...(base.practices || []), ...(dict.practices || [])],
     });
     delete merged.inherit;
     source[key] = merged;
