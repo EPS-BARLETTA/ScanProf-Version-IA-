@@ -66,6 +66,15 @@
     "Question posée": "❓",
     Erreur: "⚠️",
   };
+  const SUMMARY_SECTION_MAP = {
+    synthese: { source: "overview", type: "text", limit: 3 },
+    points_forts: { source: "strengths", type: "list", limit: 3 },
+    points_a_retravailler: { source: "needs_work", type: "list", limit: 3 },
+    suite: { source: "next_steps", type: "list", limit: 3 },
+    priorites: { source: "next_steps", type: "list", limit: 3 },
+    suggestions: { source: "next_steps", type: "list", limit: 3 },
+  };
+  const EMPTY_SECTION_TEXT = "Aucune information disponible.";
   const DICTIONARY_EVENT = "scanprof:dictionaries-changed";
   const DICTIONARY_STATE_EVENT = "scanprof:dictionary-state-changed";
   const OPEN_DICTIONARY_EVENT = "scanprof:open-dictionary";
@@ -1313,14 +1322,14 @@
     const list = Array.isArray(schema) && schema.length ? schema : window.ScanProfAIPrompt.SECTION_SCHEMA || [];
     list.forEach((section) => {
       if (!(section.key in safeData) || safeData[section.key] == null) {
-        safeData[section.key] = section.type === "list" ? [] : "Aucune information disponible.";
+        safeData[section.key] = section.type === "list" ? [] : EMPTY_SECTION_TEXT;
         return;
       }
       if (section.type === "list") {
         safeData[section.key] = normalizeListValue(safeData[section.key]);
       } else if (typeof safeData[section.key] !== "string") {
         const normalized = valueToPlainText(safeData[section.key]);
-        safeData[section.key] = normalized || "Aucune information disponible.";
+        safeData[section.key] = normalized || EMPTY_SECTION_TEXT;
       }
     });
     return safeData;
@@ -1385,12 +1394,15 @@
     if (!container) return;
     const list = Array.isArray(schema) && schema.length ? schema : window.ScanProfAIPrompt.SECTION_SCHEMA || [];
     debugSchemaConsistency(schema);
+    const localOverrides = buildLocalSectionOverrides();
     const entries = list.map((section) => {
-      const value = data ? data[section.key] : null;
+      const localValue = localOverrides[section.key];
+      const llmValue = data ? data[section.key] : null;
+      const value = resolveSectionValue(section, localValue, llmValue);
       return {
         label: section.label,
         value,
-        content: valueToPlainText(value) || "Aucune information disponible.",
+        content: valueToPlainText(value) || EMPTY_SECTION_TEXT,
       };
     });
     const displayEntries = addQuestionSection(entries);
@@ -1416,10 +1428,10 @@
 
   function formatValueAsHtml(value) {
     if (!value && value !== 0) {
-      return `<p>Aucune information disponible.</p>`;
+      return `<p>${EMPTY_SECTION_TEXT}</p>`;
     }
     if (Array.isArray(value)) {
-      if (!value.length) return `<p>Aucune information disponible.</p>`;
+      if (!value.length) return `<p>${EMPTY_SECTION_TEXT}</p>`;
       const items = value
         .map((entry) => `<li>${escapeHtml(typeof entry === "string" ? entry : JSON.stringify(entry))}</li>`)
         .join("");
@@ -1433,6 +1445,36 @@
     }
     const str = String(value);
     return `<p>${escapeHtml(str).replace(/\n{2,}/g, "<br><br>").replace(/\n/g, "<br>")}</p>`;
+  }
+
+  function buildLocalSectionOverrides() {
+    const summary = currentContext?.classAnalytics?.summary_sentences;
+    if (!summary) return {};
+    const overrides = {};
+    Object.entries(SUMMARY_SECTION_MAP).forEach(([sectionKey, config]) => {
+      const sentences = summary[config.source];
+      if (!Array.isArray(sentences) || !sentences.length) return;
+      const subset = sentences.slice(0, config.limit || (config.type === "text" ? 3 : 3));
+      if (!subset.length) return;
+      overrides[sectionKey] = config.type === "text" ? subset.join(" ") : subset;
+    });
+    return overrides;
+  }
+
+  function resolveSectionValue(section, localValue, llmValue) {
+    if (hasSectionContent(localValue, section.type)) return localValue;
+    if (hasSectionContent(llmValue, section.type)) return llmValue;
+    return section.type === "list" ? [] : EMPTY_SECTION_TEXT;
+  }
+
+  function hasSectionContent(value, type) {
+    if (type === "list") return Array.isArray(value) && value.length > 0;
+    if (Array.isArray(value)) return value.length > 0;
+    if (value == null) return false;
+    const text = String(value).trim();
+    if (!text) return false;
+    if (text === EMPTY_SECTION_TEXT) return false;
+    return true;
   }
 
   function valueToPlainText(value) {
