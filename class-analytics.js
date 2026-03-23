@@ -39,6 +39,7 @@
     { key: "temps_total", label: "Temps total", unit: "s", patterns: ["temps_total", "chrono", "time", "temps", "duration"], isTime: true },
   ];
   const SUMMARY_KEYS = ["overview", "strengths", "needs_work", "next_steps"];
+  const STUDENT_PROFILE_KEYS = ["to_support", "strengths", "to_confirm"];
   const CROSS_TRAINING_EXERCISES = {
     bu: "Burpees",
     cr: "Crunch",
@@ -58,6 +59,11 @@
   };
   const CROSS_EXERCISE_IDS = Object.keys(CROSS_TRAINING_EXERCISES);
   const CROSS_DIFF_EQUAL_TOLERANCE = 0.05;
+  const STUDENT_PROFILE_LABELS = {
+    to_support: "À accompagner",
+    strengths: "Point d'appui",
+    to_confirm: "À confirmer",
+  };
 
   function createSummarySentences() {
     return {
@@ -78,14 +84,16 @@
     const base = {
       context,
       data_quality: dataQuality,
-      class_overview: classOverview,
-      distributions: {},
-      measures: {},
-      comparisons: [],
-      student_groups: [],
-      pedagogical_signals: [],
-      limits: [],
-      summary_sentences: createSummarySentences(),
+    class_overview: classOverview,
+    distributions: {},
+    measures: {},
+    comparisons: [],
+    student_groups: [],
+    pedagogical_signals: [],
+    limits: [],
+    summary_sentences: createSummarySentences(),
+    student_profiles: createStudentProfileCollection(),
+    student_profile_sentences: createStudentProfileSentences(),
     };
 
     const dictionaryId = dictionary?.id || "";
@@ -126,16 +134,18 @@
       entryKeys.push(identity.key);
       if (!students.has(identity.key)) {
         students.set(identity.key, {
-          key: identity.key,
-          nom: identity.nom,
-          prenom: identity.prenom,
-          classe: identity.classe,
-          rawEntryCount: 0,
-          attempts: 0,
-          successAttempts: 0,
-          highestLevel: null,
-          highestLevelIndex: null,
-        });
+      key: identity.key,
+      nom: identity.nom,
+      prenom: identity.prenom,
+      classe: identity.classe,
+      rawEntryCount: 0,
+      attempts: 0,
+      successAttempts: 0,
+      highestLevel: null,
+      highestLevelIndex: null,
+      statusCounts: {},
+      levelHistory: [],
+    });
       }
       students.get(identity.key).rawEntryCount += 1;
     });
@@ -265,8 +275,11 @@
       const studentKey = entryKeys[index];
       if (!perStudentAttemptCounts.has(studentKey)) perStudentAttemptCounts.set(studentKey, 0);
       perStudentAttemptCounts.set(studentKey, perStudentAttemptCounts.get(studentKey) + 1);
-      if (students.has(studentKey)) {
-        students.get(studentKey).attempts = (students.get(studentKey).attempts || 0) + 1;
+      const studentRef = students.get(studentKey);
+      if (studentRef) {
+        studentRef.attempts = (studentRef.attempts || 0) + 1;
+        studentRef.statusCounts = studentRef.statusCounts || {};
+        studentRef.levelHistory = studentRef.levelHistory || [];
       }
 
       if (parsed.status) {
@@ -274,8 +287,11 @@
         if (!STATUS_LABELS[parsed.status]) {
           unknownStatuses.add(parsed.status);
         }
-        if (students.has(studentKey) && SUCCESS_STATUSES.has(parsed.status)) {
-          students.get(studentKey).successAttempts = (students.get(studentKey).successAttempts || 0) + 1;
+        if (studentRef) {
+          studentRef.statusCounts[parsed.status] = (studentRef.statusCounts[parsed.status] || 0) + 1;
+          if (SUCCESS_STATUSES.has(parsed.status)) {
+            studentRef.successAttempts = (studentRef.successAttempts || 0) + 1;
+          }
         }
       } else {
         missingStatusCount += 1;
@@ -289,11 +305,11 @@
         const levelIndex = levelOrder.index[parsed.level];
         if (typeof levelIndex === "number") {
           levelSamples.push({ level: parsed.level, index: levelIndex });
-          if (students.has(studentKey)) {
-            const student = students.get(studentKey);
-            if (student.highestLevelIndex == null || levelIndex > student.highestLevelIndex) {
-              student.highestLevelIndex = levelIndex;
-              student.highestLevel = parsed.level;
+          if (studentRef) {
+            studentRef.levelHistory.push({ level: parsed.level, status: parsed.status || null, index: levelIndex });
+            if (studentRef.highestLevelIndex == null || levelIndex > studentRef.highestLevelIndex) {
+              studentRef.highestLevelIndex = levelIndex;
+              studentRef.highestLevel = parsed.level;
             }
           }
         } else {
@@ -465,6 +481,10 @@
       result.limits.push(`Seuil ${thresholdInfo.level} utilisé par défaut (ajustable via une consigne « seuil = ... »).`);
     }
 
+    const climbProfiles = buildClimbTrackStudentProfiles(students);
+    result.student_profiles = climbProfiles;
+    result.student_profile_sentences = buildStudentProfileSentences(climbProfiles);
+
     return result;
   }
 
@@ -508,6 +528,27 @@
       result.limits.push("Exercices Cross Training non exploitables (prévu/réalisé absents ou insuffisants).");
       return result;
     }
+
+    const crossStudentStats = new Map();
+    exerciseStats.forEach((stat) => {
+      stat.students.forEach((sample, studentKey) => {
+        if (!Number.isFinite(sample.planned) || !Number.isFinite(sample.realized)) return;
+        const diff = sample.realized - sample.planned;
+        const classification = classifyDiff(diff, sample.planned);
+        if (!classification) return;
+        const record = crossStudentStats.get(studentKey) || {
+          above: 0,
+          below: 0,
+          equal: 0,
+          total: 0,
+          records: [],
+        };
+        record[classification] += 1;
+        record.total += 1;
+        record.records.push({ label: stat.label, classification });
+        crossStudentStats.set(studentKey, record);
+      });
+    });
 
     const exercisesWithMajority = summaries.filter((entry) => entry.shareAbove >= 0.5).length;
     const exercisesWithDifficulty = summaries.filter((entry) => entry.shareBelow >= 0.4).length;
@@ -618,6 +659,13 @@
         `${studentCount} élève(s) analysé(s) sur ${summaries.length} exercice(s) exploitable(s).`
       );
     }
+
+    const crossProfiles = buildCrossTrainingStudentProfiles({
+      students,
+      stats: crossStudentStats,
+    });
+    result.student_profiles = crossProfiles;
+    result.student_profile_sentences = buildStudentProfileSentences(crossProfiles);
 
     return result;
   }
@@ -1204,6 +1252,249 @@
     return `${base} (${suffix})`;
   }
 
+  function createStudentProfileCollection() {
+    return {
+      to_support: [],
+      strengths: [],
+      to_confirm: [],
+    };
+  }
+
+  function createStudentProfileSentences() {
+    return {
+      to_support: [],
+      strengths: [],
+      to_confirm: [],
+    };
+  }
+
+  function mergeProfileCollections(base = createStudentProfileCollection(), addition = createStudentProfileCollection()) {
+    const merged = createStudentProfileCollection();
+    STUDENT_PROFILE_KEYS.forEach((key) => {
+      const combined = [...(base?.[key] || []), ...(addition?.[key] || [])];
+      merged[key] = limitProfileEntries(dedupeProfiles(combined));
+    });
+    return merged;
+  }
+
+  function mergeSentenceCollections(base = createStudentProfileSentences(), addition = createStudentProfileSentences()) {
+    const merged = createStudentProfileSentences();
+    STUDENT_PROFILE_KEYS.forEach((key) => {
+      merged[key] = Array.from(new Set([...(base?.[key] || []), ...(addition?.[key] || [])])).slice(0, 5);
+    });
+    return merged;
+  }
+
+  function dedupeProfileCollection(collection = createStudentProfileCollection()) {
+    const cleaned = createStudentProfileCollection();
+    STUDENT_PROFILE_KEYS.forEach((key) => {
+      cleaned[key] = dedupeProfiles(collection[key] || []);
+    });
+    return cleaned;
+  }
+
+  function dedupeSentenceCollection(collection = createStudentProfileSentences()) {
+    const cleaned = createStudentProfileSentences();
+    STUDENT_PROFILE_KEYS.forEach((key) => {
+      cleaned[key] = Array.from(new Set((collection[key] || []).filter(Boolean)));
+    });
+    return cleaned;
+  }
+
+  function dedupeProfiles(list = []) {
+    const seen = new Set();
+    return list.filter((profile) => {
+      if (!profile || !profile.student) return false;
+      const id = `${profile.student}|${profile.signal || ""}`;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }
+
+  function limitProfileEntries(list = [], max = 5) {
+    if (!Array.isArray(list)) return [];
+    return list.slice(0, max);
+  }
+
+  function buildStudentProfileSentences(profiles = createStudentProfileCollection()) {
+    const sentences = createStudentProfileSentences();
+    STUDENT_PROFILE_KEYS.forEach((key) => {
+      sentences[key] = (profiles[key] || []).map((profile) => {
+        const label = profile.student || "Élève";
+        if (!profile.signal) return label;
+        return `${label} — ${profile.signal}`;
+      });
+    });
+    return sentences;
+  }
+
+  function buildClimbTrackStudentProfiles(students = new Map()) {
+    const profiles = createStudentProfileCollection();
+    const support = [];
+    const strength = [];
+    const confirm = [];
+    students.forEach((student) => {
+      const name = formatStudentName(student);
+      if (!name) return;
+      const attempts = student.attempts || 0;
+      const successes = student.successAttempts || 0;
+      const neCount = student.statusCounts?.NE || 0;
+      const highDifficultyFailures = (student.levelHistory || []).filter(
+        (entry) => entry && entry.status === "NE" && isHighClimbLevel(entry.level)
+      ).length;
+      const successLevels = (student.levelHistory || [])
+        .filter((entry) => entry && SUCCESS_STATUSES.has(entry.status || ""))
+        .map((entry) => entry.level)
+        .filter(Boolean);
+      const failureSignal = highDifficultyFailures >= 1
+        ? "plusieurs non-enchaînements sur des voies élevées"
+        : "plusieurs tentatives sans réussite";
+      const supportScore = neCount + highDifficultyFailures * 2;
+      if ((neCount >= 2 || highDifficultyFailures >= 1) && attempts >= 2) {
+        support.push({
+          profile: {
+            student: name,
+            signal: failureSignal,
+            evidence_fields: ["statut", "cotation"],
+            confidence: supportScore >= 3 ? "high" : "moderate",
+          },
+          score: supportScore,
+        });
+      }
+      if (successes >= 2 && successLevels.length) {
+        const levelHint = summarizeLevelRange(successLevels);
+        strength.push({
+          profile: {
+            student: name,
+            signal: `réussites répétées ${levelHint}`,
+            evidence_fields: ["cotation", "statut"],
+            confidence: successes >= 3 ? "high" : "moderate",
+          },
+          score: successes + (student.highestLevelIndex || 0),
+        });
+      }
+      if (attempts <= 1) {
+        confirm.push({
+          profile: {
+            student: name,
+            signal: "données encore partielles (une seule voie)",
+            evidence_fields: ["statut"],
+            confidence: "low",
+          },
+          score: 1 / Math.max(attempts || 1, 1),
+        });
+      }
+    });
+    profiles.to_support = limitProfileEntries(sortProfiles(support).map((entry) => entry.profile));
+    profiles.strengths = limitProfileEntries(sortProfiles(strength).map((entry) => entry.profile));
+    if (!profiles.to_support.length && !profiles.strengths.length) {
+      profiles.to_confirm = limitProfileEntries(sortProfiles(confirm).map((entry) => entry.profile));
+    } else {
+      profiles.to_confirm = limitProfileEntries(sortProfiles(confirm).map((entry) => entry.profile)).slice(0, 2);
+    }
+    return profiles;
+  }
+
+  function sortProfiles(entries = []) {
+    return entries
+      .filter((entry) => entry && entry.profile && entry.profile.student)
+      .sort((a, b) => (b.score || 0) - (a.score || 0));
+  }
+
+  function summarizeLevelRange(levels = []) {
+    if (!levels.length) return "";
+    const unique = Array.from(new Set(levels));
+    if (unique.length === 1) return `sur ${unique[0]}`;
+    return `entre ${unique[0]} et ${unique[unique.length - 1]}`;
+  }
+
+  function isHighClimbLevel(level = "") {
+    const normalized = normalizeLevelToken(level);
+    if (!normalized) return false;
+    if (/^[67]/.test(normalized)) return true;
+    return ["5C", "5C+", "5B+"].includes(normalized);
+  }
+
+  function formatStudentName(student = {}) {
+    return student.prenom || student.nom || "";
+  }
+
+  function buildCrossTrainingStudentProfiles({ students = new Map(), stats = new Map() } = {}) {
+    const profiles = createStudentProfileCollection();
+    const support = [];
+    const strength = [];
+    const confirm = [];
+    stats.forEach((record, key) => {
+      const student = students.get(key);
+      const name = formatStudentName(student || {});
+      if (!name) return;
+      const total = record.total || 0;
+      if (!total) return;
+      const belowCount = record.below || 0;
+      const aboveCount = record.above || 0;
+      const belowShare = belowCount / total;
+      const aboveShare = aboveCount / total;
+      const records = Array.isArray(record.records) ? record.records : [];
+      const belowExercises = records.filter((entry) => entry.classification === "below").map((entry) => entry.label);
+      const aboveExercises = records.filter((entry) => entry.classification === "above").map((entry) => entry.label);
+      const signalSupport = belowExercises.length
+        ? `souvent en dessous du prévu sur ${formatExerciseList(belowExercises)}`
+        : "résultats en dessous du prévu";
+      if ((belowCount >= 2 || belowShare >= 0.5) && belowExercises.length) {
+        support.push({
+          profile: {
+            student: name,
+            signal: signalSupport,
+            evidence_fields: ["prévu", "réalisé"],
+            confidence: total >= 4 ? "high" : "moderate",
+          },
+          score: belowCount,
+        });
+        return;
+      }
+      const signalStrength = aboveExercises.length
+        ? `atteint ou dépasse régulièrement le prévu sur ${formatExerciseList(aboveExercises)}`
+        : "atteint les objectifs prévus";
+      if ((aboveCount >= 2 || aboveShare >= 0.5) && aboveExercises.length) {
+        strength.push({
+          profile: {
+            student: name,
+            signal: signalStrength,
+            evidence_fields: ["prévu", "réalisé"],
+            confidence: total >= 4 ? "high" : "moderate",
+          },
+          score: aboveCount,
+        });
+        return;
+      }
+      if (total <= 1 || (total <= 2 && belowCount <= 1 && aboveCount <= 1)) {
+        confirm.push({
+          profile: {
+            student: name,
+            signal: "données partielles (trop peu d'exercices exploitables)",
+            evidence_fields: ["prévu", "réalisé"],
+            confidence: "low",
+          },
+          score: 1,
+        });
+      }
+    });
+    profiles.to_support = limitProfileEntries(sortProfiles(support).map((entry) => entry.profile));
+    profiles.strengths = limitProfileEntries(sortProfiles(strength).map((entry) => entry.profile));
+    profiles.to_confirm = limitProfileEntries(sortProfiles(confirm).map((entry) => entry.profile));
+    return profiles;
+  }
+
+  function formatExerciseList(list = []) {
+    const unique = Array.from(new Set(list.filter(Boolean)));
+    if (!unique.length) return "";
+    if (unique.length === 1) return unique[0];
+    const head = unique.slice(0, -1).join(", ");
+    const tail = unique[unique.length - 1];
+    return `${head} et ${tail}`;
+  }
+
   function buildHighlight(label, count, total) {
     if (!count || !total) return null;
     return {
@@ -1360,6 +1651,15 @@
     if (addition.summary_sentences) {
       target.summary_sentences = mergeSummarySentences(target.summary_sentences, addition.summary_sentences);
     }
+    if (addition.student_profiles) {
+      target.student_profiles = mergeProfileCollections(target.student_profiles, addition.student_profiles);
+    }
+    if (addition.student_profile_sentences) {
+      target.student_profile_sentences = mergeSentenceCollections(
+        target.student_profile_sentences,
+        addition.student_profile_sentences
+      );
+    }
   }
 
   function mergeDataQuality(base, addition) {
@@ -1420,6 +1720,12 @@
     }
     if (base.summary_sentences) {
       base.summary_sentences = dedupeSummarySentences(base.summary_sentences);
+    }
+    if (base.student_profiles) {
+      base.student_profiles = dedupeProfileCollection(base.student_profiles);
+    }
+    if (base.student_profile_sentences) {
+      base.student_profile_sentences = dedupeSentenceCollection(base.student_profile_sentences);
     }
   }
 

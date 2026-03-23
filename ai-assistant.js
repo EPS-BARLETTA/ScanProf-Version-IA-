@@ -65,6 +65,14 @@
     "Bilan textuel": "📄",
     "Question posée": "❓",
     Erreur: "⚠️",
+    "Repérages élèves": "🧭",
+  };
+  const STUDENT_PROFILE_SECTION_KEY = "reperages_eleves";
+  const STUDENT_PROFILE_CATEGORIES = ["to_support", "strengths", "to_confirm"];
+  const STUDENT_PROFILE_CATEGORY_LABELS = {
+    to_support: "À accompagner",
+    strengths: "Point d'appui",
+    to_confirm: "À confirmer",
   };
   const SUMMARY_SECTION_MAP = {
     synthese: { source: "overview", type: "text", limit: 3 },
@@ -919,6 +927,8 @@
         dictionary: dictionaryToUse,
       });
       lastQuestionText = intent === "question" ? (questionText || "").trim() : "";
+      const studentProfiles = classAnalytics?.student_profiles || null;
+      const studentProfileSentences = classAnalytics?.student_profile_sentences || null;
       const analysisInput = {
         contexte: buildContext(
           summary,
@@ -931,7 +941,9 @@
           storedContext,
           interpretationSupport,
           preAnalysis,
-          classAnalytics
+          classAnalytics,
+          studentProfiles,
+          studentProfileSentences
         ),
         eleves: sliced,
         intent,
@@ -939,6 +951,8 @@
         interpretation: interpretationSupport,
         pre_analysis: preAnalysis,
         summary_sentences: classAnalytics?.summary_sentences || null,
+        student_profiles: studentProfiles,
+        student_profile_sentences: studentProfileSentences,
         class_analytics: classAnalytics,
       };
       const builder = window.ScanProfAIPrompt;
@@ -992,7 +1006,9 @@
     storedContext,
     interpretationSupport,
     preAnalysis,
-    classAnalytics
+    classAnalytics,
+    studentProfiles,
+    studentProfileSentences
   ) {
     const meta = summary.meta || {};
     const bestClass = meta?.className || summary.classes?.[0]?.name || "";
@@ -1019,6 +1035,8 @@
     if (interpretationSupport?.manual) info.indications_enseignant_interpretation = interpretationSupport.manual;
     if (preAnalysis) info.pre_analysis = preAnalysis;
     if (classAnalytics) info.class_analytics = classAnalytics;
+    if (studentProfiles) info.student_profiles = studentProfiles;
+    if (studentProfileSentences) info.student_profile_sentences = studentProfileSentences;
     if (totalEntries > usedEntries) {
       info.tronque = `Seuls ${usedEntries} élèves sur ${totalEntries} ont été envoyés pour limiter la taille du prompt.`;
     }
@@ -1095,6 +1113,12 @@
     if (parsedPayload.summary_sentences) {
       parsedPayload.summary_sentences = slimSummarySentences(parsedPayload.summary_sentences);
     }
+    if (parsedPayload.student_profile_sentences) {
+      parsedPayload.student_profile_sentences = slimProfileSentences(parsedPayload.student_profile_sentences);
+    }
+    if (parsedPayload.student_profiles) {
+      parsedPayload.student_profiles = slimStudentProfiles(parsedPayload.student_profiles);
+    }
     const slimJson = JSON.stringify(parsedPayload);
     return `${hint}\n${block.prefix}${slimJson}\n${block.suffix}\n\n(Version condensée pour relancer.)`;
   }
@@ -1130,6 +1154,12 @@
         clone[field] = clone[field].slice(0, 4);
       }
     });
+    if (clone.student_profiles) {
+      clone.student_profiles = slimStudentProfiles(clone.student_profiles);
+    }
+    if (clone.student_profile_sentences) {
+      clone.student_profile_sentences = slimProfileSentences(clone.student_profile_sentences);
+    }
     return clone;
   }
 
@@ -1139,6 +1169,26 @@
     keys.forEach((key) => {
       if (Array.isArray(summary[key])) {
         trimmed[key] = summary[key].slice(0, 4);
+      }
+    });
+    return trimmed;
+  }
+
+  function slimStudentProfiles(profiles = {}) {
+    const trimmed = {};
+    STUDENT_PROFILE_CATEGORIES.forEach((key) => {
+      if (Array.isArray(profiles[key])) {
+        trimmed[key] = profiles[key].slice(0, 3);
+      }
+    });
+    return trimmed;
+  }
+
+  function slimProfileSentences(sentences = {}) {
+    const trimmed = {};
+    STUDENT_PROFILE_CATEGORIES.forEach((key) => {
+      if (Array.isArray(sentences[key])) {
+        trimmed[key] = sentences[key].slice(0, 4);
       }
     });
     return trimmed;
@@ -1400,12 +1450,19 @@
       const llmValue = data ? data[section.key] : null;
       const value = resolveSectionValue(section, localValue, llmValue);
       return {
+        key: section.key,
         label: section.label,
         value,
         content: valueToPlainText(value) || EMPTY_SECTION_TEXT,
       };
     });
-    const displayEntries = addQuestionSection(entries);
+    const filteredEntries = entries.filter((entry) => {
+      if (entry.key === STUDENT_PROFILE_SECTION_KEY) {
+        return Array.isArray(entry.value) && entry.value.length > 0;
+      }
+      return true;
+    });
+    const displayEntries = addQuestionSection(filteredEntries);
     container.innerHTML = displayEntries.map((entry) => renderSection(entry.label, entry.value)).join("");
     updateReportState(displayEntries.map(({ label, content }) => ({ label, content })));
   }
@@ -1448,20 +1505,49 @@
   }
 
   function buildLocalSectionOverrides() {
-    const summary = currentContext?.classAnalytics?.summary_sentences;
-    if (!summary) return {};
     const overrides = {};
-    Object.entries(SUMMARY_SECTION_MAP).forEach(([sectionKey, config]) => {
-      const sentences = summary[config.source];
-      if (!Array.isArray(sentences) || !sentences.length) return;
-      const subset = sentences.slice(0, config.limit || (config.type === "text" ? 3 : 3));
-      if (!subset.length) return;
-      overrides[sectionKey] = config.type === "text" ? subset.join(" ") : subset;
-    });
+    const summary = currentContext?.classAnalytics?.summary_sentences;
+    if (summary) {
+      Object.entries(SUMMARY_SECTION_MAP).forEach(([sectionKey, config]) => {
+        const sentences = summary[config.source];
+        if (!Array.isArray(sentences) || !sentences.length) return;
+        const subset = sentences.slice(0, config.limit || (config.type === "text" ? 3 : 3));
+        if (!subset.length) return;
+        overrides[sectionKey] = config.type === "text" ? subset.join(" ") : subset;
+      });
+    }
+    const studentProfileSentences = currentContext?.classAnalytics?.student_profile_sentences;
+    if (studentProfileSentences) {
+      const lines = buildStudentProfileLines(studentProfileSentences);
+      if (lines.length) {
+        overrides[STUDENT_PROFILE_SECTION_KEY] = lines;
+      }
+    }
     return overrides;
   }
 
+  function buildStudentProfileLines(sentences = {}, limitPerCategory = 3) {
+    const lines = [];
+    if (!sentences || typeof sentences !== "object") return lines;
+    STUDENT_PROFILE_CATEGORIES.forEach((key) => {
+      const entries = sentences[key];
+      if (!Array.isArray(entries) || !entries.length) return;
+      const label = STUDENT_PROFILE_CATEGORY_LABELS[key] || "";
+      entries.slice(0, limitPerCategory).forEach((text) => {
+        const clean = String(text || "").trim();
+        if (!clean) return;
+        lines.push(`${label} : ${clean}`);
+      });
+    });
+    return lines.slice(0, 9);
+  }
+
   function resolveSectionValue(section, localValue, llmValue) {
+    if (section.key === STUDENT_PROFILE_SECTION_KEY) {
+      if (hasSectionContent(localValue, "list")) return localValue;
+      if (hasSectionContent(llmValue, "list")) return llmValue;
+      return [];
+    }
     if (hasSectionContent(localValue, section.type)) return localValue;
     if (hasSectionContent(llmValue, section.type)) return llmValue;
     return section.type === "list" ? [] : EMPTY_SECTION_TEXT;

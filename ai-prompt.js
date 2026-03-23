@@ -5,6 +5,7 @@
       { key: "points_forts", label: "Points forts", type: "list" },
       { key: "points_a_retravailler", label: "Points à retravailler", type: "list" },
       { key: "suite", label: "Suite proposée", type: "list" },
+      { key: "reperages_eleves", label: "Repérages élèves", type: "list" },
     ],
     difficulte: [
       { key: "synthese", label: "Synthèse", type: "text" },
@@ -64,6 +65,9 @@
       "Utilise en priorité `summary_sentences` : `overview` alimente la Synthèse, `strengths` les Points forts, `needs_work` les Points à retravailler (ou équivalents) et `next_steps` la Suite/priorités. Reformule ces phrases sans les supprimer.",
       "Complète ensuite avec `class_analytics` (context, data_quality, class_overview, distributions, measures, comparisons, student_groups, pedagogical_signals, limits) pour ajouter d'autres constats chiffrés sans recalculer ni extrapoler.",
       "N'écris «Aucune information disponible.» que si `summary_sentences`, `class_analytics` ET `pre_analysis` sont tous vides pour la section concernée.",
+      "Les prénoms ne doivent provenir que de `student_profile_sentences` ou `student_profiles`. N'en invente jamais.",
+      "Chaque repérage élève doit rester factuel et actionnable, sans jugement psychologique.",
+      "Si aucune donnée nominative fiable n'est disponible, laisse `reperages_eleves` vide ou signale prudemment l'absence de repérage fiable.",
       "Utilise les pourcentages fournis pour produire des formulations comme « la moitié », « un tiers », « X % » ; si une donnée manque, signale la limite correspondante plutôt que d'inventer.",
       "N'utilise jamais de blocs de code dans ta réponse finale.",
       "Le ton doit rester professionnel, positif et directement exploitable.",
@@ -87,6 +91,9 @@
       interpretation: payload.interpretation || null,
       pre_analysis: payload.pre_analysis || null,
       summary_sentences: payload.summary_sentences || payload.class_analytics?.summary_sentences || null,
+      student_profiles: payload.student_profiles || payload.class_analytics?.student_profiles || null,
+      student_profile_sentences:
+        payload.student_profile_sentences || payload.class_analytics?.student_profile_sentences || null,
       class_analytics: payload.class_analytics || null,
     };
 
