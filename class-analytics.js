@@ -39,6 +39,25 @@
     { key: "temps_total", label: "Temps total", unit: "s", patterns: ["temps_total", "chrono", "time", "temps", "duration"], isTime: true },
   ];
   const SUMMARY_KEYS = ["overview", "strengths", "needs_work", "next_steps"];
+  const CROSS_TRAINING_EXERCISES = {
+    bu: "Burpees",
+    cr: "Crunch",
+    di: "Dips",
+    fe: "Fentes",
+    jk: "Jumping jack",
+    mt: "Mountain climber",
+    sa: "Saut",
+    po: "Pompes",
+    ra: "Rameur",
+    sq: "Squat",
+  };
+  const CROSS_TRAINING_VARIANT_LABELS = {
+    "1": "Niveau 1",
+    "2": "Niveau 2",
+    l: "Niveau",
+  };
+  const CROSS_EXERCISE_IDS = Object.keys(CROSS_TRAINING_EXERCISES);
+  const CROSS_DIFF_EQUAL_TOLERANCE = 0.05;
 
   function createSummarySentences() {
     return {
@@ -79,6 +98,13 @@
         summary,
       });
       mergeAnalytics(base, climbStats);
+    } else if (dictionaryId === "cross_training") {
+      const crossStats = analyzeCrossTraining(entries, {
+        students,
+        entryKeys,
+        dictionary,
+      });
+      mergeAnalytics(base, crossStats);
     }
 
     const numericStats = analyzeNumericFields(entries, summary, dictionary);
@@ -442,6 +468,160 @@
     return result;
   }
 
+  function analyzeCrossTraining(entries, { students, entryKeys }) {
+    const result = {
+      class_overview: { summary: [], aggregate: {}, highlights: [], notes: [] },
+      distributions: {},
+      measures: {},
+      comparisons: [],
+      student_groups: [],
+      pedagogical_signals: [],
+      limits: [],
+      data_quality: {
+        issues: [],
+        unknown_codes: { statuses: [], levels: [], fields: [] },
+      },
+      summary_sentences: createSummarySentences(),
+    };
+    const exerciseStats = new Map();
+    entries.forEach((entry, index) => {
+      const studentKey = entryKeys[index] || `row_${index}`;
+      const perExercise = extractCrossTrainingEntry(entry);
+      Object.values(perExercise).forEach((sample) => {
+        if (sample.planned == null && sample.realized == null) return;
+        const stat = ensureCrossExerciseStat(exerciseStats, sample.meta);
+        const existing = stat.students.get(studentKey) || { planned: null, realized: null };
+        if (sample.planned != null) existing.planned = sample.planned;
+        if (sample.realized != null) existing.realized = sample.realized;
+        stat.students.set(studentKey, existing);
+      });
+    });
+
+    const summaries = [];
+    exerciseStats.forEach((stat) => {
+      const summary = computeCrossExerciseSummary(stat);
+      if (summary) summaries.push(summary);
+    });
+
+    const studentCount = students.size;
+    if (!summaries.length) {
+      result.limits.push("Exercices Cross Training non exploitables (prévu/réalisé absents ou insuffisants).");
+      return result;
+    }
+
+    const exercisesWithMajority = summaries.filter((entry) => entry.shareAbove >= 0.5).length;
+    const exercisesWithDifficulty = summaries.filter((entry) => entry.shareBelow >= 0.4).length;
+    const absoluteDiffRanking = [...summaries].sort((a, b) => (b.absMeanDiff || 0) - (a.absMeanDiff || 0));
+    const successRanking = [...summaries].sort((a, b) => (b.shareAbove || 0) - (a.shareAbove || 0));
+    const difficultyRanking = [...summaries].sort((a, b) => (b.shareBelow || 0) - (a.shareBelow || 0));
+    const dispersionRanking = [...summaries].sort((a, b) => (a.dispersion?.coefficient || 0) - (b.dispersion?.coefficient || 0));
+
+    result.class_overview.summary = [
+      { key: "cross_exercises", label: "Exercices exploitables", value: summaries.length },
+    ];
+    result.class_overview.aggregate = {
+      exercises: summaries.length,
+    };
+    if (exercisesWithMajority) {
+      result.class_overview.highlights.push(
+        buildHighlight("Exercices ≥ objectif", exercisesWithMajority, summaries.length)
+      );
+    }
+    if (exercisesWithDifficulty) {
+      result.class_overview.highlights.push(
+        buildHighlight("Exercices sous l'objectif", exercisesWithDifficulty, summaries.length)
+      );
+    }
+
+    result.distributions.cross_training = {
+      label: "Prévu vs réalisé",
+      items: summaries.map((entry) => ({
+        id: entry.id,
+        label: entry.label,
+        mean_planned: round(entry.meanPlanned, 2),
+        mean_realized: round(entry.meanRealized, 2),
+        median_realized: round(entry.medianRealized, 2),
+        min_realized: round(entry.minRealized, 2),
+        max_realized: round(entry.maxRealized, 2),
+        mean_diff: round(entry.meanDiff, 2),
+        share_above: entry.shareAbove,
+        share_equal: entry.shareEqual,
+        share_below: entry.shareBelow,
+        dispersion: entry.dispersion,
+        sample_size: entry.validCount,
+      })),
+    };
+
+    result.measures.cross_training = {
+      label: "Synthèse Cross Training",
+      total_exercises: summaries.length,
+      exercises_with_majority: exercisesWithMajority,
+      exercises_with_difficulty: exercisesWithDifficulty,
+      most_positive_gap: absoluteDiffRanking[0] || null,
+      most_negative_gap: absoluteDiffRanking.find((entry) => (entry.meanDiff || 0) < 0) || null,
+    };
+
+    if (successRanking[0]) {
+      result.comparisons.push({
+        label: "Exercices les plus réussis",
+        detail: `${successRanking[0].label} : ${toPercent(successRanking[0].shareAbove)}% au-dessus du prévu.`,
+        share: round(successRanking[0].shareAbove, 4),
+      });
+    }
+    if (difficultyRanking[0]) {
+      result.comparisons.push({
+        label: "Exercices en difficulté",
+        detail: `${difficultyRanking[0].label} : ${toPercent(difficultyRanking[0].shareBelow)}% en dessous du prévu.`,
+        share: round(difficultyRanking[0].shareBelow, 4),
+      });
+    }
+    if (absoluteDiffRanking[0]) {
+      result.comparisons.push({
+        label: "Écart prévu/réalisé le plus marqué",
+        detail: `${absoluteDiffRanking[0].label} : écart moyen ${round(absoluteDiffRanking[0].meanDiff, 2)}.`,
+        share: round(Math.abs(absoluteDiffRanking[0].meanDiff || 0), 4),
+      });
+    }
+
+    const heteroHigh = [...dispersionRanking].reverse().find((entry) => entry.dispersion?.label === "marquée");
+    const heteroLow = dispersionRanking.find((entry) => entry.dispersion?.label === "faible");
+    if (heteroHigh && heteroLow) {
+      result.pedagogical_signals.push(
+        `Résultats homogènes sur ${heteroLow.label}, mais plus dispersés sur ${heteroHigh.label}.`
+      );
+    }
+    if (successRanking[0]) {
+      result.pedagogical_signals.push(
+        `${successRanking[0].label} sert de repère : ${toPercent(successRanking[0].shareAbove)}% dépassent le plan.`
+      );
+    }
+    if (difficultyRanking[0]) {
+      result.pedagogical_signals.push(
+        `${difficultyRanking[0].label} requiert un accompagnement (${toPercent(difficultyRanking[0].shareBelow)}% sous l'objectif).`
+      );
+    }
+    result.pedagogical_signals = Array.from(new Set(result.pedagogical_signals));
+
+    result.summary_sentences = buildCrossTrainingSummarySentences({
+      studentCount,
+      exerciseSummaries: summaries,
+      bestExercise: successRanking[0],
+      challengingExercise: difficultyRanking[0],
+      largestGap: absoluteDiffRanking[0],
+      homogeneousExercise: heteroLow,
+      heterogeneousExercise: heteroHigh,
+    });
+
+    if (!result.summary_sentences.overview.length) {
+      addSentence(
+        result.summary_sentences.overview,
+        `${studentCount} élève(s) analysé(s) sur ${summaries.length} exercice(s) exploitable(s).`
+      );
+    }
+
+    return result;
+  }
+
   function parseClimbEntry(entry, levelSet, levelOrder) {
     if (!entry || typeof entry !== "object") return null;
     const normalizedKeys = Object.keys(entry).map((key) => ({
@@ -798,6 +978,194 @@
     return sentences;
   }
 
+  function extractCrossTrainingEntry(entry = {}) {
+    const perExercise = {};
+    if (!entry || typeof entry !== "object") return perExercise;
+    Object.keys(entry).forEach((key) => {
+      if (!key || key.startsWith("__")) return;
+      const normalized = normalizeKeyName(key);
+      const parsed = parseCrossTrainingField(normalized);
+      if (!parsed) return;
+      const numeric = coerceNumericValue(entry[key], { tolerateUnits: true });
+      if (!Number.isFinite(numeric)) return;
+      const exerciseKey = buildCrossExerciseKey(parsed.exerciseId, parsed.variant);
+      if (!perExercise[exerciseKey]) {
+        perExercise[exerciseKey] = {
+          planned: null,
+          realized: null,
+          meta: {
+            id: exerciseKey,
+            exerciseId: parsed.exerciseId,
+            variant: parsed.variant,
+            label: formatExerciseLabel(parsed.exerciseId, parsed.variant),
+          },
+        };
+      }
+      if (parsed.type === "p") perExercise[exerciseKey].planned = numeric;
+      else perExercise[exerciseKey].realized = numeric;
+    });
+    return perExercise;
+  }
+
+  function parseCrossTrainingField(normalizedKey) {
+    if (!normalizedKey) return null;
+    const match = normalizedKey.match(/(.+)_([pr])$/);
+    if (!match) return null;
+    const base = match[1];
+    const type = match[2];
+    const exerciseId = CROSS_EXERCISE_IDS.find(
+      (id) => base === id || base.startsWith(`${id}_`)
+    );
+    if (!exerciseId) return null;
+    let variant = base.slice(exerciseId.length);
+    variant = variant.replace(/^_/, "");
+    if (!variant) variant = null;
+    return { exerciseId, variant, type };
+  }
+
+  function buildCrossExerciseKey(exerciseId, variant) {
+    return variant ? `${exerciseId}_${variant}` : exerciseId;
+  }
+
+  function ensureCrossExerciseStat(map, meta) {
+    if (map.has(meta.id)) return map.get(meta.id);
+    const record = {
+      id: meta.id,
+      exerciseId: meta.exerciseId,
+      variant: meta.variant,
+      label: meta.label,
+      students: new Map(),
+    };
+    map.set(meta.id, record);
+    return record;
+  }
+
+  function computeCrossExerciseSummary(stat) {
+    if (!stat || !stat.students || !stat.students.size) return null;
+    const samples = Array.from(stat.students.values());
+    const realizedValues = samples.map((sample) => (Number.isFinite(sample.realized) ? sample.realized : null)).filter(
+      (value) => value != null
+    );
+    if (!realizedValues.length) return null;
+    const plannedValues = samples
+      .map((sample) => (Number.isFinite(sample.planned) ? sample.planned : null))
+      .filter((value) => value != null);
+    const paired = samples
+      .map((sample) => {
+        if (!Number.isFinite(sample.planned) || !Number.isFinite(sample.realized)) return null;
+        return { planned: sample.planned, realized: sample.realized, diff: sample.realized - sample.planned };
+      })
+      .filter(Boolean);
+    const meanRealized = realizedValues.reduce((sum, value) => sum + value, 0) / realizedValues.length;
+    const meanPlanned = plannedValues.length
+      ? plannedValues.reduce((sum, value) => sum + value, 0) / plannedValues.length
+      : null;
+    const meanDiff = paired.length ? paired.reduce((sum, sample) => sum + sample.diff, 0) / paired.length : null;
+    const aboveCount = paired.filter((sample) => classifyDiff(sample.diff, sample.planned) === "above").length;
+    const equalCount = paired.filter((sample) => classifyDiff(sample.diff, sample.planned) === "equal").length;
+    const belowCount = paired.filter((sample) => classifyDiff(sample.diff, sample.planned) === "below").length;
+    const totalPaired = paired.length || 0;
+    return {
+      id: stat.id,
+      label: stat.label,
+      meanPlanned,
+      meanRealized,
+      medianRealized: calcMedian(realizedValues),
+      minRealized: Math.min(...realizedValues),
+      maxRealized: Math.max(...realizedValues),
+      meanDiff,
+      absMeanDiff: meanDiff != null ? Math.abs(meanDiff) : null,
+      shareAbove: totalPaired ? aboveCount / totalPaired : 0,
+      shareEqual: totalPaired ? equalCount / totalPaired : 0,
+      shareBelow: totalPaired ? belowCount / totalPaired : 0,
+      dispersion: classifyDispersion(calcStdDev(realizedValues, meanRealized), meanRealized),
+      validCount: realizedValues.length,
+    };
+  }
+
+  function classifyDiff(diff, planned) {
+    if (!Number.isFinite(diff)) return "equal";
+    const baseTolerance = Math.max(Math.abs(planned || 0) * 0.05, CROSS_DIFF_EQUAL_TOLERANCE);
+    if (diff > baseTolerance) return "above";
+    if (diff < -baseTolerance) return "below";
+    return "equal";
+  }
+
+  function buildCrossTrainingSummarySentences({
+    studentCount,
+    exerciseSummaries,
+    bestExercise,
+    challengingExercise,
+    largestGap,
+    homogeneousExercise,
+    heterogeneousExercise,
+  }) {
+    const sentences = createSummarySentences();
+    if (!Array.isArray(exerciseSummaries) || !exerciseSummaries.length) return sentences;
+    addSentence(
+      sentences.overview,
+      `${studentCount} élève(s) analysé(s) sur ${exerciseSummaries.length} exercice(s) exploitable(s).`
+    );
+    if (bestExercise?.shareAbove) {
+      const intro = describeShareIntro(bestExercise.shareAbove);
+      if (intro) {
+        const verb = intro.singular ? "atteint" : "atteignent";
+        addSentence(sentences.overview, `${intro.text} ${verb} l'objectif prévu sur ${bestExercise.label}.`);
+      }
+    }
+    if (largestGap && Number.isFinite(largestGap.meanDiff)) {
+      addSentence(
+        sentences.overview,
+        `${largestGap.label} présente l'écart prévu/réalisé le plus marqué (${round(largestGap.meanDiff || 0, 2)}).`
+      );
+    }
+    if (homogeneousExercise && heterogeneousExercise) {
+      addSentence(
+        sentences.overview,
+        `Les résultats sont plus homogènes sur ${homogeneousExercise.label} que sur ${heterogeneousExercise.label}.`
+      );
+    }
+    if (bestExercise?.shareAbove >= 0.6) {
+      const intro = describeShareIntro(bestExercise.shareAbove);
+      if (intro) {
+        const verb = intro.singular ? "représente" : "représentent";
+        addSentence(sentences.strengths, `${intro.text} ${verb} un point fort sur ${bestExercise.label}.`);
+      }
+    }
+    if (largestGap && Number.isFinite(largestGap.meanDiff) && Math.abs(largestGap.meanDiff || 0) >= 1) {
+      const polarity = largestGap.meanDiff > 0 ? "au-dessus" : "en dessous";
+      const text = `${largestGap.label} reste ${polarity} du plan en moyenne (${round(Math.abs(largestGap.meanDiff), 2)}).`;
+      if (largestGap.meanDiff > 0) addSentence(sentences.strengths, text);
+      else addSentence(sentences.needs_work, text);
+    }
+    if (challengingExercise?.shareBelow && challengingExercise.shareBelow >= 0.3) {
+      const intro = describeShareIntro(challengingExercise.shareBelow);
+      if (intro) {
+        const verb = intro.singular ? "reste" : "restent";
+        addSentence(sentences.needs_work, `${intro.text} ${verb} en dessous du prévu sur ${challengingExercise.label}.`);
+      }
+    }
+    if (heterogeneousExercise) {
+      addSentence(
+        sentences.needs_work,
+        `${heterogeneousExercise.label} montre une dispersion ${heterogeneousExercise.dispersion?.label || "marquée"}.`
+      );
+    }
+    if (challengingExercise) {
+      addSentence(
+        sentences.next_steps,
+        `Prévoir une différenciation de charge sur ${challengingExercise.label}.`
+      );
+    }
+    if (largestGap && Number.isFinite(largestGap.meanDiff) && Math.abs(largestGap.meanDiff || 0) >= 1) {
+      addSentence(
+        sentences.next_steps,
+        `Ajuster le volume prévu de ${largestGap.label} pour réduire l'écart constaté.`
+      );
+    }
+    return sentences;
+  }
+
   function addSentence(target, text) {
     if (!text || !Array.isArray(target)) return;
     target.push(text);
@@ -827,6 +1195,13 @@
     if (label === "modérée") return "Le groupe apparaît modérément hétérogène.";
     if (label === "marquée") return "Le groupe apparaît très hétérogène.";
     return null;
+  }
+
+  function formatExerciseLabel(exerciseId, variant) {
+    const base = CROSS_TRAINING_EXERCISES[exerciseId] || exerciseId.toUpperCase();
+    if (!variant) return base;
+    const suffix = CROSS_TRAINING_VARIANT_LABELS[variant] || variant.toUpperCase();
+    return `${base} (${suffix})`;
   }
 
   function buildHighlight(label, count, total) {
