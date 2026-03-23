@@ -111,6 +111,7 @@
   }
 
   function openModal(activityName) {
+    alert("openModal called");
     if (!refs.modal) return;
     console.debug("[ScanProf Dictionary] openModal", { activityName: activityName || null });
     refs.modal.classList.remove("sp-hidden");
@@ -123,10 +124,13 @@
   }
 
   function renderModal(activityName) {
+    alert("renderModal called");
     console.debug("[ScanProf Dictionary] renderModal", { incomingActivity: activityName || null });
     state.currentActivityName = activityName || state.currentActivityName || getCurrentActivityName();
     renderCurrentSection(state.currentActivityName);
+    alert("about to call renderSelector");
     renderSelector();
+    alert("renderSelector finished");
     toggleEditor(false);
     setFeedback("");
   }
