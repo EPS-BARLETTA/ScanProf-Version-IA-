@@ -38,6 +38,16 @@
     { key: "vma", label: "VMA", unit: "km/h", patterns: ["vma"] },
     { key: "temps_total", label: "Temps total", unit: "s", patterns: ["temps_total", "chrono", "time", "temps", "duration"], isTime: true },
   ];
+  const SUMMARY_KEYS = ["overview", "strengths", "needs_work", "next_steps"];
+
+  function createSummarySentences() {
+    return {
+      overview: [],
+      strengths: [],
+      needs_work: [],
+      next_steps: [],
+    };
+  }
 
   function analyze({ dataset = [], dictionary = null, summary = {}, manualText = "" } = {}) {
     const entries = Array.isArray(dataset) ? dataset.filter((entry) => entry && typeof entry === "object") : [];
@@ -56,6 +66,7 @@
       student_groups: [],
       pedagogical_signals: [],
       limits: [],
+      summary_sentences: createSummarySentences(),
     };
 
     const dictionaryId = dictionary?.id || "";
@@ -286,11 +297,18 @@
     const maxAttempts = attemptCountsArray.length ? Math.max(...attemptCountsArray) : 0;
     const atLeastTwo = attemptCountsArray.filter((value) => value >= 2).length;
     const atLeastThree = attemptCountsArray.filter((value) => value >= 3).length;
+    const shareTwo = studentCount ? atLeastTwo / Math.max(studentCount, 1) : 0;
+    const shareThree = studentCount ? atLeastThree / Math.max(studentCount, 1) : 0;
     const attemptsDistribution = buildAttemptsDistribution(attemptCountsArray, studentCount);
 
     const statusDistribution = buildStatusDistribution(statusCounts);
     const successStudents = Array.from(students.values()).filter((student) => (student.successAttempts || 0) > 0).length;
     const successShare = studentCount ? successStudents / Math.max(studentCount, 1) : 0;
+    const totalStatuses = Array.from(statusCounts.values()).reduce((sum, count) => sum + count, 0);
+    const successAttemptCount = (statusCounts.get("E") || 0) + (statusCounts.get("E2") || 0);
+    const successAttemptShare = totalStatuses ? successAttemptCount / totalStatuses : 0;
+    const firstTryShare = totalStatuses ? (statusCounts.get("E") || 0) / totalStatuses : 0;
+    const neShare = totalStatuses ? (statusCounts.get("NE") || 0) / totalStatuses : 0;
 
     const thresholdInfo = resolveCotationThreshold(manualText, levelSet, levelOrder.list);
     const thresholdStudents = thresholdInfo && typeof thresholdInfo.index === "number"
@@ -385,6 +403,21 @@
       atLeastThree,
       thresholdShare,
       thresholdInfo,
+      levelStats,
+    });
+    result.summary_sentences = buildClimbSummarySentences({
+      studentCount,
+      attemptCount,
+      meanAttempts,
+      medianAttempts,
+      shareTwo,
+      shareThree,
+      successStudentShare: successShare,
+      successAttemptShare,
+      firstTryShare,
+      neShare,
+      thresholdInfo,
+      thresholdShare,
       levelStats,
     });
 
@@ -666,6 +699,136 @@
     return Array.from(new Set(signals));
   }
 
+  function buildClimbSummarySentences({
+    studentCount,
+    attemptCount,
+    meanAttempts,
+    medianAttempts,
+    shareTwo,
+    shareThree,
+    successStudentShare,
+    successAttemptShare,
+    firstTryShare,
+    neShare,
+    thresholdInfo,
+    thresholdShare,
+    levelStats,
+  }) {
+    const sentences = createSummarySentences();
+    if (!studentCount || !attemptCount) return sentences;
+    addSentence(
+      sentences.overview,
+      `${attemptCount} voie(s) renseignée(s) pour ${studentCount} élève(s) (moyenne ${round(meanAttempts, 2)} / médiane ${round(
+        medianAttempts,
+        2
+      )} voie(s)).`
+    );
+    addSentence(sentences.overview, buildShareSentence(shareTwo, "renseigné au moins deux voies."));
+    addSentence(sentences.overview, buildShareSentence(shareThree, "tenté trois voies ou plus."));
+    if (levelStats?.majorityWindow?.from || levelStats?.majorityWindow?.to) {
+      const from = levelStats.majorityWindow?.from;
+      const to = levelStats.majorityWindow?.to;
+      if (from && to && from !== to) {
+        addSentence(sentences.overview, `La majorité des cotations observées se situe entre ${from} et ${to}.`);
+      } else if (from || to) {
+        addSentence(sentences.overview, `La majorité des cotations observées se situe autour de ${from || to}.`);
+      }
+    }
+    if (levelStats?.medianLevel) {
+      const maxLevel = levelStats.maxLevel || levelStats.medianLevel;
+      addSentence(sentences.overview, `Le niveau médian est ${levelStats.medianLevel} (max observé ${maxLevel}).`);
+    }
+    addSentence(sentences.overview, describeHeterogeneitySentence(levelStats?.heterogeneity?.label));
+    addSentence(sentences.overview, buildShareSentence(successStudentShare, "validé au moins une voie."));
+
+    if (successAttemptShare >= 0.55) {
+      addSentence(
+        sentences.strengths,
+        `${toPercent(successAttemptShare)}% des tentatives aboutissent à un statut E/E2.`
+      );
+    }
+    if (firstTryShare >= 0.5) {
+      addSentence(sentences.strengths, "Les réussites au premier essai sont majoritaires.");
+    }
+    if (shareThree >= 0.33) {
+      addSentence(sentences.strengths, buildShareSentence(shareThree, "tenté trois voies ou plus."));
+    }
+    if (thresholdInfo && thresholdShare >= 0.4) {
+      addSentence(sentences.strengths, buildShareSentence(thresholdShare, `atteint ${thresholdInfo.level} ou plus.`));
+    }
+    if (successStudentShare >= 0.6) {
+      addSentence(sentences.strengths, buildShareSentence(successStudentShare, "validé au moins une voie."));
+    }
+
+    if (successAttemptShare < 0.5) {
+      addSentence(sentences.needs_work, "Moins de la moitié des tentatives se terminent par un statut E/E2.");
+    }
+    if (neShare >= 0.3) {
+      addSentence(sentences.needs_work, `${toPercent(neShare)}% des tentatives restent en statut NE.`);
+    }
+    if (thresholdInfo && thresholdShare > 0 && thresholdShare < 0.35) {
+      addSentence(
+        sentences.needs_work,
+        `Les voies de niveau ${thresholdInfo.level} et plus restent minoritaires (${toPercent(thresholdShare)}%).`
+      );
+    }
+    if (shareTwo && shareTwo < 0.5) {
+      addSentence(sentences.needs_work, "Moins de la moitié des élèves renseignent deux voies ou plus.");
+    }
+    if (levelStats?.heterogeneity?.label === "marquée") {
+      addSentence(sentences.needs_work, "L'hétérogénéité marquée impose une différenciation plus fine.");
+    }
+
+    if (thresholdInfo && thresholdShare < 0.35) {
+      addSentence(
+        sentences.next_steps,
+        `Prévoir des essais guidés pour amener davantage d'élèves vers ${thresholdInfo.level} et plus.`
+      );
+    }
+    if (neShare >= 0.3) {
+      addSentence(sentences.next_steps, "Planifier un travail ciblé sur les voies encore en statut NE.");
+    }
+    if (shareTwo && shareTwo < 0.5) {
+      addSentence(sentences.next_steps, "Inciter chaque élève à tenter au moins deux voies pour disposer d'un volume utile.");
+    }
+    if (levelStats?.heterogeneity?.label === "marquée") {
+      addSentence(sentences.next_steps, "Mettre en place des ateliers différenciés pour gérer l'hétérogénéité marquée.");
+    }
+
+    return sentences;
+  }
+
+  function addSentence(target, text) {
+    if (!text || !Array.isArray(target)) return;
+    target.push(text);
+  }
+
+  function buildShareSentence(share, action) {
+    if (!action) return null;
+    const descriptor = describeShareIntro(share);
+    if (!descriptor) return null;
+    const verb = descriptor.singular ? "a" : "ont";
+    return `${descriptor.text} ${verb} ${action}`;
+  }
+
+  function describeShareIntro(share) {
+    if (!Number.isFinite(share) || share <= 0) return null;
+    if (share >= 0.92) return { text: "La quasi-totalité des élèves", singular: true };
+    if (Math.abs(share - 0.5) <= 0.07) return { text: "La moitié des élèves", singular: true };
+    if (Math.abs(share - 1 / 3) <= 0.05) return { text: "Un tiers des élèves", singular: true };
+    if (share >= 0.66) return { text: "La majorité des élèves", singular: true };
+    if (share <= 0.15) return { text: "Une minorité des élèves", singular: true };
+    return { text: `${toPercent(share)} % des élèves`, singular: false };
+  }
+
+  function describeHeterogeneitySentence(label) {
+    if (!label) return null;
+    if (label === "faible") return "Le groupe apparaît peu hétérogène.";
+    if (label === "modérée") return "Le groupe apparaît modérément hétérogène.";
+    if (label === "marquée") return "Le groupe apparaît très hétérogène.";
+    return null;
+  }
+
   function buildHighlight(label, count, total) {
     if (!count || !total) return null;
     return {
@@ -819,6 +982,9 @@
     if (addition.limits?.length) {
       target.limits.push(...addition.limits);
     }
+    if (addition.summary_sentences) {
+      target.summary_sentences = mergeSummarySentences(target.summary_sentences, addition.summary_sentences);
+    }
   }
 
   function mergeDataQuality(base, addition) {
@@ -855,11 +1021,30 @@
     return merged;
   }
 
+  function mergeSummarySentences(base = createSummarySentences(), addition = createSummarySentences()) {
+    const merged = createSummarySentences();
+    SUMMARY_KEYS.forEach((key) => {
+      merged[key] = [...(base?.[key] || []), ...(addition?.[key] || [])];
+    });
+    return merged;
+  }
+
+  function dedupeSummarySentences(summary = createSummarySentences()) {
+    const cleaned = createSummarySentences();
+    SUMMARY_KEYS.forEach((key) => {
+      cleaned[key] = Array.from(new Set((summary?.[key] || []).filter(Boolean)));
+    });
+    return cleaned;
+  }
+
   function finalizeAnalytics(base) {
     base.pedagogical_signals = Array.from(new Set(base.pedagogical_signals || []));
     base.limits = Array.from(new Set(base.limits || []));
     if (base.data_quality?.issues) {
       base.data_quality.issues = Array.from(new Set(base.data_quality.issues));
+    }
+    if (base.summary_sentences) {
+      base.summary_sentences = dedupeSummarySentences(base.summary_sentences);
     }
   }
 

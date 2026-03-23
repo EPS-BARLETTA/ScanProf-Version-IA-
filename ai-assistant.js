@@ -929,6 +929,7 @@
         questionText: lastQuestionText,
         interpretation: interpretationSupport,
         pre_analysis: preAnalysis,
+        summary_sentences: classAnalytics?.summary_sentences || null,
         class_analytics: classAnalytics,
       };
       const builder = window.ScanProfAIPrompt;
@@ -1082,6 +1083,9 @@
         ctx.class_analytics = slimClassAnalyticsPayload(ctx.class_analytics);
       }
     }
+    if (parsedPayload.summary_sentences) {
+      parsedPayload.summary_sentences = slimSummarySentences(parsedPayload.summary_sentences);
+    }
     const slimJson = JSON.stringify(parsedPayload);
     return `${hint}\n${block.prefix}${slimJson}\n${block.suffix}\n\n(Version condensée pour relancer.)`;
   }
@@ -1118,6 +1122,17 @@
       }
     });
     return clone;
+  }
+
+  function slimSummarySentences(summary = {}) {
+    const keys = ["overview", "strengths", "needs_work", "next_steps"];
+    const trimmed = {};
+    keys.forEach((key) => {
+      if (Array.isArray(summary[key])) {
+        trimmed[key] = summary[key].slice(0, 4);
+      }
+    });
+    return trimmed;
   }
 
   function extractJsonBlock(content = "") {
