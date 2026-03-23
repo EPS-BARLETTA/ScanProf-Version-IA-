@@ -14,6 +14,7 @@ const LS_FOCUS_KEY = "participants_cols_focus_v1";
 const LS_ELEVES_KEY = "eleves";
 const LS_CUSTOM_COLS_KEY = "participants_custom_cols_v1";
 const SESSION_META_KEY = "scanprof_current_session_meta";
+const AI_CONTEXT_KEY = "scanprof_ai_context";
 const DATASET_EVENT = "scanprof:dataset-changed";
 
 function emitDatasetChanged(detail = {}) {
@@ -21,6 +22,102 @@ function emitDatasetChanged(detail = {}) {
     document.dispatchEvent(new CustomEvent(DATASET_EVENT, { detail }));
   } catch {
     /* silencieux */
+  }
+}
+
+function getStoredAIContextValue() {
+  try {
+    const raw = localStorage.getItem(AI_CONTEXT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveAIContext(payload) {
+  try {
+    if (!payload) {
+      localStorage.removeItem(AI_CONTEXT_KEY);
+      return;
+    }
+    localStorage.setItem(AI_CONTEXT_KEY, JSON.stringify(payload));
+  } catch {
+    /* noop */
+  }
+}
+
+function clearAIContext() {
+  saveAIContext(null);
+}
+
+function hashString(str = "") {
+  const input = str || "scanprof";
+  let hash = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = (hash << 5) - hash + input.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function buildFallbackAIContext(entries = []) {
+  const classCount = {};
+  entries.forEach((entry) => {
+    if (!entry || typeof entry !== "object") return;
+    const cls = String(entry.classe || "").trim();
+    if (!cls) return;
+    classCount[cls] = (classCount[cls] || 0) + 1;
+  });
+  const primaryClass = Object.entries(classCount)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name]) => name)[0] || "Classe inconnue";
+  const columns = getDisplayColumns(entries);
+  const signatureSource = `${columns.join("|")}#${entries.length}`;
+  const datasetSignature = `dataset-${hashString(signatureSource)}`;
+  return {
+    classe: primaryClass,
+    activite: "",
+    seance: datasetSignature,
+    datasetSignature,
+    date: new Date().toISOString(),
+  };
+}
+
+function syncAIContextFromDataset(entries = []) {
+  const currentContext = getStoredAIContextValue();
+  const snapshot = entries && entries.length ? buildFallbackAIContext(entries) : null;
+  const sessionMeta = getSessionMeta();
+  if (sessionMeta) {
+    const payload = {
+      classe: sessionMeta.className || snapshot?.classe || "",
+      activite: sessionMeta.activityName || "",
+      seance: sessionMeta.sessionName || "",
+      datasetSignature: snapshot?.datasetSignature || sessionMeta.sessionId || sessionMeta.activityId || "",
+      date: sessionMeta.updatedAt || sessionMeta.savedAt || new Date().toISOString(),
+    };
+    saveAIContext(payload);
+    return;
+  }
+  if (!entries || !entries.length) {
+    clearAIContext();
+    return;
+  }
+  if (
+    currentContext &&
+    currentContext.activite &&
+    currentContext.datasetSignature &&
+    snapshot &&
+    snapshot.datasetSignature === currentContext.datasetSignature
+  ) {
+    return;
+  }
+  if (currentContext && !currentContext.activite && snapshot && currentContext.datasetSignature === snapshot.datasetSignature) {
+    return;
+  }
+  if (snapshot) {
+    saveAIContext(snapshot);
   }
 }
 
@@ -620,6 +717,7 @@ function updateTable(data) {
     thead.innerHTML = "";
     tbody.innerHTML = `<tr><td colspan="1">Aucun élève enregistré.</td></tr>`;
     _lastCols = [];
+    syncAIContextFromDataset([]);
     emitDatasetChanged({ total: 0 });
     return;
   }
@@ -651,6 +749,7 @@ function updateTable(data) {
     scroller.scrollLeft = prevScrollLeft;
     scroller.scrollTop = prevScrollTop;
   }
+  syncAIContextFromDataset(data);
   emitDatasetChanged({ total: data.length });
 }
 

@@ -213,9 +213,17 @@
   }
 
   function getContextScopeKey(context = {}) {
-    const classe = slug(String(context.classe || context.className || "").trim() || "classe");
-    const activite = slug(String(context.activite || context.activityName || "").trim() || "activite");
-    return `${classe}::${activite}`;
+    const classeSource = context.classe || context.className || context.datasetSignature || "";
+    const classe = slug(String(classeSource || "").trim() || "classe");
+    const rawActivity = context.activite || context.activityName || "";
+    const hasActivity = Boolean(String(rawActivity || "").trim());
+    const datasetSignature = context.datasetSignature || context.sessionId || "";
+    const activitySlug = slug(
+      String(hasActivity ? rawActivity : datasetSignature || "activite")
+        .trim() || "activite"
+    );
+    const datasetSegment = !hasActivity && datasetSignature ? `::${slug(String(datasetSignature).trim())}` : "";
+    return `${classe}::${activitySlug}${datasetSegment}`;
   }
 
   function loadManualDictionaryMap() {
@@ -307,6 +315,7 @@
   }
 
   function rememberAutoDictionary(context, dictionary) {
+    if (!dictionary) return;
     const key = getContextScopeKey(context);
     if (!key) return;
     const map = loadAutoDictionaryMap();
@@ -551,8 +560,11 @@
   function refreshDictionaryHint(activityName, coverage, dictionaryInfo) {
     if (!refs.dictionaryHint) return;
     const storedContext = getStoredAIContext();
-    const target = (activityName || "").trim() || lastActivityName || storedContext.activite || "";
-    if (target) lastActivityName = target;
+    const explicitName = (activityName || "").trim();
+    const storedActivity = (storedContext?.activite || "").trim();
+    const target = explicitName || storedActivity;
+    if (explicitName) lastActivityName = explicitName;
+    else if (!storedActivity) lastActivityName = "";
     if (coverage) lastDictionaryCoverage = coverage;
     const currentCoverage = coverage || lastDictionaryCoverage || null;
     const stateApi = window.ScanProfDictionaryState;
@@ -576,6 +588,15 @@
     if (!dictionary && target) {
       dictionary = getActivityDictionary(target);
     }
+    logDictionaryDetection({
+      explicitActivity: explicitName || null,
+      storedActivity,
+      resolvedActivity: target || null,
+      manualDictionaryId: manualEntry?.dictionaryId || null,
+      autoDictionaryId: autoEntry?.dictionaryId || null,
+      contextScope: storedContext ? getContextScopeKey(storedContext) : null,
+      datasetSignature: storedContext?.datasetSignature || null,
+    });
     const unknownCount = currentCoverage?.unknown?.length || 0;
     const manualActive = !!manualEntry?.dictionaryId;
     const autoLabel = autoEntry?.label || "";
@@ -614,7 +635,8 @@
     if (!trigger) return;
     const action = trigger.getAttribute("data-dictionary-action");
     if (action === "open") {
-      openDictionaryPanel(lastActivityName || getStoredAIContext().activite || "");
+      const context = getStoredAIContext();
+      openDictionaryPanel(context?.activite || lastActivityName || "");
     }
   }
 
@@ -632,10 +654,12 @@
   }
 
   function openDictionaryPanel(activityName = "") {
+    const context = getStoredAIContext();
+    const resolved = activityName || context?.activite || "";
     try {
       window.dispatchEvent(
         new CustomEvent(OPEN_DICTIONARY_EVENT, {
-          detail: { activityName, source: "assistant" },
+          detail: { activityName: resolved, source: "assistant" },
         })
       );
     } catch {
@@ -981,15 +1005,61 @@
   }
 
   function shortenMessagesForRetry(messages = []) {
-    return messages.map((msg, index) => {
-      if (index === messages.length - 1 && msg.role === "user") {
-        return {
-          ...msg,
-          content: `${msg.content}\n\nConsigne additionnelle : Réponds en JSON strict très court (une phrase par champ, listes de 2 éléments maximum).`,
-        };
-      }
-      return msg;
+    return messages.map((msg) => {
+      if (msg.role !== "user") return msg;
+      return {
+        ...msg,
+        content: condenseUserMessageForRetry(msg.content || ""),
+      };
     });
+  }
+
+  function condenseUserMessageForRetry(content = "") {
+    const hint =
+      "Consigne courte : réponds uniquement avec le JSON demandé, phrases ≤ 8 mots, listes limitées à 2 éléments.";
+    const block = extractJsonBlock(content);
+    if (!block) return `${content}\n\n${hint}`;
+    let parsedPayload = null;
+    try {
+      parsedPayload = JSON.parse(block.jsonText);
+    } catch {
+      /* ignore parsing error, we’ll fall back to hint */
+    }
+    if (!parsedPayload || typeof parsedPayload !== "object") {
+      return `${content}\n\n${hint}`;
+    }
+    if (Array.isArray(parsedPayload.donnees_eleves) && parsedPayload.donnees_eleves.length > 35) {
+      parsedPayload.donnees_eleves = parsedPayload.donnees_eleves.slice(0, 35);
+    }
+    if (parsedPayload.contexte) {
+      const ctx = parsedPayload.contexte;
+      if (Array.isArray(ctx.aide_interpretation)) {
+        ctx.aide_interpretation = ctx.aide_interpretation.slice(0, 3);
+      }
+      if (ctx.pre_analysis?.known_facts?.length > 5) {
+        ctx.pre_analysis.known_facts = ctx.pre_analysis.known_facts.slice(0, 5);
+      }
+      if (ctx.pre_analysis?.pedagogical_signals?.length > 3) {
+        ctx.pre_analysis.pedagogical_signals = ctx.pre_analysis.pedagogical_signals.slice(0, 3);
+      }
+    }
+    const slimJson = JSON.stringify(parsedPayload);
+    return `${hint}\n${block.prefix}${slimJson}\n${block.suffix}\n\n(Version condensée pour relancer.)`;
+  }
+
+  function extractJsonBlock(content = "") {
+    const regex = /```json([\s\S]*?)```/i;
+    const match = regex.exec(content);
+    if (!match) return null;
+    const start = match.index || 0;
+    const prefix = `${content.slice(0, start)}\`\`\`json\n`;
+    const closingStart = start + match[0].length - 3;
+    const suffix = content.slice(closingStart);
+    return {
+      jsonText: match[1].trim(),
+      prefix,
+      suffix,
+    };
   }
 
   function processAIResponse(schema, rawText) {
@@ -998,20 +1068,19 @@
       logDebug("processAIResponse: empty response detected");
       throw createIncompleteResponseError("Réponse IA vide, merci de relancer l’analyse.", "empty_string");
     }
-    const parsed = tryParseJson(cleaned);
-    if (parsed && typeof parsed === "object") {
-      logDebug("processAIResponse: parsed structured JSON", { keys: Object.keys(parsed) });
-      return { type: "structured", data: parsed, raw: cleaned };
-    }
-    if (looksLikeJson(cleaned)) {
-      logDebug("processAIResponse: looks like JSON but parse failed");
-      throw createIncompleteResponseError("Réponse IA incomplète, merci de relancer l’analyse.", "json_like_parse_failed");
-    }
-    if (!cleaned.trim()) {
+    const trimmed = cleaned.trim();
+    if (!trimmed) {
       logDebug("processAIResponse: whitespace-only response");
       throw createIncompleteResponseError("Réponse IA vide, merci de relancer l’analyse.", "whitespace_only");
     }
-    return { type: "text", text: cleaned.trim(), raw: cleaned };
+    const structured = parseJsonWithTolerance(trimmed);
+    if (structured?.data) {
+      const normalized = ensureSchemaDefaults(schema, structured.data);
+      logDebug("processAIResponse: parsed structured JSON", { strategy: structured.strategy, keys: Object.keys(normalized) });
+      return { type: "structured", data: normalized, raw: trimmed };
+    }
+    logDebug("processAIResponse: fallback to text", { reason: structured?.error || "unstructured_text" });
+    return { type: "text", text: trimmed, raw: trimmed };
   }
 
   function createIncompleteResponseError(message, details) {
@@ -1053,6 +1122,127 @@
     if (!trimmed) return false;
     if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) return true;
     return /"[a-z0-9_\- ]+"\s*:/.test(trimmed);
+  }
+
+  function parseJsonWithTolerance(text = "") {
+    const attempts = [];
+    const direct = tryParseJson(text);
+    if (direct && typeof direct === "object") return { data: direct, strategy: "direct" };
+    attempts.push("direct");
+    const extracted = extractJSONObject(text);
+    if (extracted) {
+      const parsed = tryParseJson(extracted);
+      if (parsed && typeof parsed === "object") return { data: parsed, strategy: "extracted" };
+      attempts.push("extracted");
+    }
+    const trimmedSnippet = trimJsonEnvelope(text);
+    if (trimmedSnippet && trimmedSnippet !== text) {
+      const parsed = tryParseJson(trimmedSnippet);
+      if (parsed && typeof parsed === "object") return { data: parsed, strategy: "trimmed_envelope" };
+      attempts.push("trimmed_envelope");
+    }
+    const repaired = repairLooseJson(text);
+    if (repaired && repaired !== text) {
+      const parsed = tryParseJson(repaired);
+      if (parsed && typeof parsed === "object") return { data: parsed, strategy: "repaired_commas" };
+      attempts.push("repaired_commas");
+    }
+    return { error: "json_parse_failed", attempts };
+  }
+
+  function extractJSONObject(text = "") {
+    const str = String(text || "");
+    let start = -1;
+    const stack = [];
+    let inString = false;
+    let escapeNext = false;
+    for (let i = 0; i < str.length; i += 1) {
+      const char = str[i];
+      if (inString) {
+        if (escapeNext) {
+          escapeNext = false;
+        } else if (char === "\\") {
+          escapeNext = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+      if (char === "{" || char === "[") {
+        if (start === -1) start = i;
+        stack.push(char === "{" ? "}" : "]");
+        continue;
+      }
+      if (char === "}" || char === "]") {
+        if (!stack.length) return null;
+        const expected = stack.pop();
+        if (char !== expected) return null;
+        if (!stack.length && start !== -1) {
+          return str.slice(start, i + 1);
+        }
+      }
+    }
+    return null;
+  }
+
+  function trimJsonEnvelope(text = "") {
+    const str = String(text || "");
+    const braceStart = str.indexOf("{");
+    const braceEnd = str.lastIndexOf("}");
+    if (braceStart !== -1 && braceEnd > braceStart) {
+      return str.slice(braceStart, braceEnd + 1);
+    }
+    const bracketStart = str.indexOf("[");
+    const bracketEnd = str.lastIndexOf("]");
+    if (bracketStart !== -1 && bracketEnd > bracketStart) {
+      return str.slice(bracketStart, bracketEnd + 1);
+    }
+    return "";
+  }
+
+  function repairLooseJson(text = "") {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return "";
+    const fixedTrailingCommas = trimmed.replace(/,\s*(\}|\])/g, "$1");
+    if (fixedTrailingCommas !== trimmed) return fixedTrailingCommas;
+    return "";
+  }
+
+  function ensureSchemaDefaults(schema, payload) {
+    const safeData = payload && typeof payload === "object" && !Array.isArray(payload) ? { ...payload } : {};
+    const list = Array.isArray(schema) && schema.length ? schema : window.ScanProfAIPrompt.SECTION_SCHEMA || [];
+    list.forEach((section) => {
+      if (!(section.key in safeData) || safeData[section.key] == null) {
+        safeData[section.key] = section.type === "list" ? [] : "Aucune information disponible.";
+        return;
+      }
+      if (section.type === "list") {
+        safeData[section.key] = normalizeListValue(safeData[section.key]);
+      } else if (typeof safeData[section.key] !== "string") {
+        const normalized = valueToPlainText(safeData[section.key]);
+        safeData[section.key] = normalized || "Aucune information disponible.";
+      }
+    });
+    return safeData;
+  }
+
+  function normalizeListValue(value) {
+    if (Array.isArray(value)) {
+      return value.map((entry) => (typeof entry === "string" ? entry : valueToPlainText(entry))).filter(Boolean);
+    }
+    if (typeof value === "string") {
+      return value
+        .split(/\n+|;/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    }
+    if (value == null) return [];
+    const fallback = valueToPlainText(value);
+    return fallback ? [fallback] : [];
   }
 
   function renderReport(schema, processed) {
@@ -1786,5 +1976,10 @@
       promptSchemaKeys: schemaKeys,
       rendererSchemaFallback: (window.ScanProfAIPrompt && window.ScanProfAIPrompt.SECTION_SCHEMA || []).map((s) => s.key),
     });
+  }
+
+  function logDictionaryDetection(details = {}) {
+    if (!DEBUG_AI) return;
+    logDebug("Dictionary detection snapshot", details);
   }
 })();

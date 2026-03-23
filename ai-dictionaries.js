@@ -4,7 +4,7 @@
   };
 
   const EVENT_NAME = "scanprof:dictionaries-changed";
-  const DEFAULT_DICTIONARIES = {
+  const DEFAULT_DICTIONARIES = Object.freeze({
     cross_training: {
       id: "cross_training",
       label: "Cross training",
@@ -189,10 +189,14 @@
         "Signaler ceux dont les pénalités explosent d'une boucle à l'autre.",
       ],
     },
-  };
+  });
 
   function deepClone(value) {
     return JSON.parse(JSON.stringify(value));
+  }
+
+  function getDefaultDictionaries() {
+    return deepClone(DEFAULT_DICTIONARIES);
   }
 
   function slugify(text = "") {
@@ -307,7 +311,11 @@
   }
 
   function computeEffectiveDictionaries() {
-    const merged = mergeDictionaries(normalizeAll(DEFAULT_DICTIONARIES), loadUserDictionaries());
+    const base = normalizeAll(getDefaultDictionaries());
+    const merged = mergeDictionaries(base, loadUserDictionaries());
+    Object.keys(base).forEach((key) => {
+      if (!merged[key]) merged[key] = base[key];
+    });
     Object.keys(merged).forEach((key) => {
       resolveInheritance(key, merged);
     });
@@ -417,7 +425,7 @@
 
   window.ScanProfAIDictionaries = {
     STORAGE_KEYS,
-    DEFAULT_DICTIONARIES: normalizeAll(DEFAULT_DICTIONARIES),
+    DEFAULT_DICTIONARIES: normalizeAll(getDefaultDictionaries()),
     list: listDictionaries,
     getDictionaryForActivity,
     getDictionaryById,

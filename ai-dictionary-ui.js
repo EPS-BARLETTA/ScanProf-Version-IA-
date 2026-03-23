@@ -90,6 +90,11 @@
       }
     });
     window.addEventListener(STATE_EVENT, () => renderCurrentSection());
+    const datasetEvent = (window.ScanProfParticipants && window.ScanProfParticipants.eventName) || "scanprof:dataset-changed";
+    document.addEventListener(datasetEvent, () => {
+      state.currentActivityName = getCurrentActivityName();
+      renderCurrentSection(state.currentActivityName);
+    });
 
     renderModal();
   }
@@ -157,7 +162,14 @@
   function renderSelector() {
     if (!refs.select) return;
     const previous = refs.select.value || state.selectedId || "";
-    const dictionaries = api.list({ includeSource: true }).sort((a, b) => (a.label || "").localeCompare(b.label || ""));
+    let dictionaries = api.list({ includeSource: true }) || [];
+    if (!dictionaries.length && api.DEFAULT_DICTIONARIES) {
+      dictionaries = Object.values(api.DEFAULT_DICTIONARIES).map((dict) => ({
+        ...dict,
+        source: dict.source || "default",
+      }));
+    }
+    dictionaries = dictionaries.sort((a, b) => (a.label || "").localeCompare(b.label || ""));
     refs.select.innerHTML =
       `<option value="">Sélectionner...</option>` +
       dictionaries
