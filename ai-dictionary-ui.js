@@ -183,28 +183,26 @@
       outerHTML: refs.select.outerHTML,
     });
     const previous = refs.select.value || state.selectedId || "";
-    const dictionaries = getCatalogueDictionaries()
+    let dictionaries = getCatalogueDictionaries()
       .slice()
       .sort((a, b) => (a.label || "").localeCompare(b.label || ""));
+    if (!dictionaries.length) {
+      dictionaries = getDefaultCatalogue();
+    }
     console.debug("[ScanProf Dictionary] renderSelector dictionaries", {
       previous,
       dictionaryCount: dictionaries.length,
       labels: dictionaries.map((dict) => dict.label || dict.id),
     });
-    let optionsHtml = `<option value="">Sélectionner...</option><option value="test_app">TEST APP</option>`;
-    const defaultOptions = dictionaries
-      .map(
-        (dict) =>
-          `<option value="${escapeHtml(dict.id)}"${dict.id === previous ? " selected" : ""}>${escapeHtml(dict.label)}${
-            dict.source === "custom" ? " (perso)" : ""
-          }</option>`
-      )
+    let optionsHtml = `<option value="">Sélectionner...</option>`;
+    const mappedOptions = dictionaries
+      .map((dict) => buildOptionMarkup(dict, previous))
       .join("");
-    if (!defaultOptions) {
-      console.warn("[ScanProf Dictionary] Aucun dictionnaire détecté, injection fallback défaut.");
-      optionsHtml += getDefaultFallbackOptions(previous);
+    if (!mappedOptions) {
+      console.warn("[ScanProf Dictionary] Aucun dictionnaire disponible, injection fallback statique.");
+      optionsHtml += buildStaticFallbackOptions(previous);
     } else {
-      optionsHtml += defaultOptions;
+      optionsHtml += mappedOptions;
     }
     refs.select.innerHTML = optionsHtml;
     state.selectedId = refs.select.value || "";
@@ -244,29 +242,42 @@
       console.error("[ScanProf Dictionary] Impossible de charger les dictionnaires personnalisés :", err);
       dictionaries = [];
     }
-    if (!dictionaries.length && api.DEFAULT_DICTIONARIES) {
-      const fallback = Object.values(api.DEFAULT_DICTIONARIES);
-      dictionaries = fallback.map((dict) => ({
-        ...dict,
-        source: dict.source || "default",
-      }));
+    if (!dictionaries.length) {
+      dictionaries = getDefaultCatalogue();
     }
     logCatalogueDebug({
       fetchedCount: Array.isArray(dictionaries) ? dictionaries.length : 0,
       hadError: !!error,
-      defaultKeys: api.DEFAULT_DICTIONARIES ? Object.keys(api.DEFAULT_DICTIONARIES) : [],
+      defaultKeys: api.DEFAULT_DICTIONARIES ? Object.keys(api.DEFAULT_DICTIONARIES) : ["cross_training", "climb_track", "arcathlon_v2", "laser_run"],
       labels: (dictionaries || []).map((dict) => dict.label || dict.id),
     });
     return dictionaries;
   }
 
-  function getDefaultFallbackOptions(previousId = "") {
-    if (!api || !api.DEFAULT_DICTIONARIES) return "";
-    return Object.values(api.DEFAULT_DICTIONARIES)
-      .map((dict) => {
-        const selected = dict.id === previousId ? " selected" : "";
-        return `<option value="${escapeHtml(dict.id)}"${selected}>${escapeHtml(dict.label)} (défaut)</option>`;
-      })
+  function getDefaultCatalogue() {
+    if (api?.DEFAULT_DICTIONARIES) {
+      return Object.values(api.DEFAULT_DICTIONARIES).map((dict) => ({ ...dict, source: dict.source || "default" }));
+    }
+    const fallbackLabels = {
+      cross_training: "Cross Training",
+      climb_track: "Climb Track",
+      arcathlon_v2: "ArcAthlon V2",
+      laser_run: "Laser Run",
+    };
+    return Object.entries(fallbackLabels).map(([id, label]) => ({ id, label, source: "default" }));
+  }
+
+  function buildOptionMarkup(dict, previousId) {
+    if (!dict || !dict.id) return "";
+    const selected = dict.id === previousId ? " selected" : "";
+    const suffix =
+      dict.source === "custom" ? " (perso)" : dict.source === "default" || !dict.source ? " (défaut)" : "";
+    return `<option value="${escapeHtml(dict.id)}"${selected}>${escapeHtml(dict.label || dict.id)}${suffix}</option>`;
+  }
+
+  function buildStaticFallbackOptions(previousId = "") {
+    return getDefaultCatalogue()
+      .map((dict) => buildOptionMarkup(dict, previousId))
       .join("");
   }
 

@@ -1096,8 +1096,16 @@
       logDebug("processAIResponse: parsed structured JSON", { strategy: structured.strategy, keys: Object.keys(normalized) });
       return { type: "structured", data: normalized, raw: trimmed };
     }
+    if (looksLikeJson(trimmed)) {
+      const partial = buildPartialStructuredData(schema, trimmed);
+      if (partial) {
+        logDebug("processAIResponse: partial JSON extracted", { keys: Object.keys(partial) });
+        return { type: "structured", data: partial, raw: trimmed };
+      }
+    }
+    const cleanedText = stripJsonArtifacts(trimmed);
     logDebug("processAIResponse: fallback to text", { reason: structured?.error || "unstructured_text" });
-    return { type: "text", text: trimmed, raw: trimmed };
+    return { type: "text", text: cleanedText, raw: trimmed };
   }
 
   function createIncompleteResponseError(message, details) {
@@ -1260,6 +1268,31 @@
     if (value == null) return [];
     const fallback = valueToPlainText(value);
     return fallback ? [fallback] : [];
+  }
+
+  function buildPartialStructuredData(schema = [], text = "") {
+    if (!schema || !schema.length || !text) return null;
+    const matches = [...String(text).matchAll(/"([^"]+)"\s*:\s*"([^"]*)/g)];
+    if (!matches.length) return null;
+    const draft = {};
+    matches.forEach(([, key, value]) => {
+      if (!key) return;
+      draft[key.trim()] = value != null ? value.trim() : "";
+    });
+    const hasKnownKeys = schema.some((section) => section.key in draft);
+    if (!hasKnownKeys) return null;
+    return ensureSchemaDefaults(schema, draft);
+  }
+
+  function stripJsonArtifacts(text = "") {
+    const str = String(text == null ? "" : text);
+    if (!str) return "";
+    return str
+      .replace(/^{+|}+$/g, "")
+      .replace(/\\"/g, '"')
+      .replace(/"(.*?)"\s*:\s*/g, (_, key) => `${key}: `)
+      .replace(/[{[\]}]/g, "")
+      .trim();
   }
 
   function renderReport(schema, processed) {
