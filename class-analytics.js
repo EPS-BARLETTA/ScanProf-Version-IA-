@@ -59,6 +59,14 @@
   };
   const CROSS_EXERCISE_IDS = Object.keys(CROSS_TRAINING_EXERCISES);
   const CROSS_DIFF_EQUAL_TOLERANCE = 0.05;
+  // Student profile thresholds (kept centralized for easier tuning after field tests).
+  const CLIMB_MIN_ATTEMPTS_FOR_STRONG_PROFILE = 3; // min voies before classifying as support/strength
+  const CLIMB_MIN_ATTEMPTS_FOR_CONFIRM = 1;
+  const CROSS_MIN_EXERCISES_FOR_STRONG_PROFILE = 3; // min exercices significatifs before strong signal
+  const CROSS_MAX_EXERCISES_FOR_CONFIRM = 2;
+  const CROSS_PROFILE_DIFF_SHARE_THRESHOLD = 0.12; // 12% relative écart to deem significant
+  const CROSS_PROFILE_DIFF_ABS_THRESHOLD = 1; // fallback absolute écart
+  const PROFILE_MAX_CONFIRM_ENTRIES = 1;
   const STUDENT_PROFILE_LABELS = {
     to_support: "À accompagner",
     strengths: "Point d'appui",
@@ -534,18 +542,37 @@
       stat.students.forEach((sample, studentKey) => {
         if (!Number.isFinite(sample.planned) || !Number.isFinite(sample.realized)) return;
         const diff = sample.realized - sample.planned;
-        const classification = classifyDiff(diff, sample.planned);
+        let classification = classifyDiff(diff, sample.planned);
         if (!classification) return;
+        if (classification !== "equal" && !isSignificantCrossDiff(diff, sample.planned)) {
+          classification = "equal";
+        }
         const record = crossStudentStats.get(studentKey) || {
           above: 0,
           below: 0,
           equal: 0,
           total: 0,
+          markedBelow: 0,
+          markedAbove: 0,
           records: [],
         };
         record[classification] += 1;
         record.total += 1;
-        record.records.push({ label: stat.label, classification });
+        const detail = {
+          label: stat.label,
+          classification,
+          diff,
+          planned: sample.planned,
+          realized: sample.realized,
+        };
+        if (classification === "below" && isMarkedNegativeDiff(diff, sample.planned)) {
+          record.markedBelow = (record.markedBelow || 0) + 1;
+          detail.marked = "below";
+        } else if (classification === "above" && isMarkedPositiveDiff(diff, sample.planned)) {
+          record.markedAbove = (record.markedAbove || 0) + 1;
+          detail.marked = "above";
+        }
+        record.records.push(detail);
         crossStudentStats.set(studentKey, record);
       });
     });
@@ -1139,6 +1166,25 @@
     return "equal";
   }
 
+  function isMarkedNegativeDiff(diff, planned) {
+    if (!Number.isFinite(diff)) return false;
+    const threshold = Math.max(Math.abs(planned || 0) * 0.15, CROSS_DIFF_EQUAL_TOLERANCE * 3);
+    return diff < -threshold;
+  }
+
+  function isMarkedPositiveDiff(diff, planned) {
+    if (!Number.isFinite(diff)) return false;
+    const threshold = Math.max(Math.abs(planned || 0) * 0.15, CROSS_DIFF_EQUAL_TOLERANCE * 3);
+    return diff > threshold;
+  }
+
+  function isSignificantCrossDiff(diff, planned) {
+    if (!Number.isFinite(diff)) return false;
+    const share = Math.abs(planned || 0) ? Math.abs(diff) / Math.max(Math.abs(planned), 1) : Math.abs(diff);
+    if (share >= CROSS_PROFILE_DIFF_SHARE_THRESHOLD) return true;
+    return Math.abs(diff) >= CROSS_PROFILE_DIFF_ABS_THRESHOLD;
+  }
+
   function buildCrossTrainingSummarySentences({
     studentCount,
     exerciseSummaries,
@@ -1332,68 +1378,196 @@
   function buildClimbTrackStudentProfiles(students = new Map()) {
     const profiles = createStudentProfileCollection();
     const support = [];
-    const strength = [];
+    const strengths = [];
     const confirm = [];
     students.forEach((student) => {
       const name = formatStudentName(student);
       if (!name) return;
-      const attempts = student.attempts || 0;
-      const successes = student.successAttempts || 0;
-      const neCount = student.statusCounts?.NE || 0;
-      const highDifficultyFailures = (student.levelHistory || []).filter(
-        (entry) => entry && entry.status === "NE" && isHighClimbLevel(entry.level)
-      ).length;
-      const successLevels = (student.levelHistory || [])
-        .filter((entry) => entry && SUCCESS_STATUSES.has(entry.status || ""))
-        .map((entry) => entry.level)
-        .filter(Boolean);
-      const failureSignal = highDifficultyFailures >= 1
-        ? "plusieurs non-enchaînements sur des voies élevées"
-        : "plusieurs tentatives sans réussite";
-      const supportScore = neCount + highDifficultyFailures * 2;
-      if ((neCount >= 2 || highDifficultyFailures >= 1) && attempts >= 2) {
+      const performance = evaluateClimbStudentPerformance(student);
+      if (!performance) return;
+      const supportSignal = describeClimbSupportSignal(performance);
+      if (supportSignal) {
         support.push({
           profile: {
             student: name,
-            signal: failureSignal,
+            signal: supportSignal.text,
             evidence_fields: ["statut", "cotation"],
-            confidence: supportScore >= 3 ? "high" : "moderate",
+            confidence: supportSignal.confidence,
           },
-          score: supportScore,
+          score: supportSignal.weight,
         });
+        return;
       }
-      if (successes >= 2 && successLevels.length) {
-        const levelHint = summarizeLevelRange(successLevels);
-        strength.push({
+      const strengthSignal = describeClimbStrengthSignal(performance);
+      if (strengthSignal) {
+        strengths.push({
           profile: {
             student: name,
-            signal: `réussites répétées ${levelHint}`,
+            signal: strengthSignal.text,
             evidence_fields: ["cotation", "statut"],
-            confidence: successes >= 3 ? "high" : "moderate",
+            confidence: strengthSignal.confidence,
           },
-          score: successes + (student.highestLevelIndex || 0),
+          score: strengthSignal.weight,
         });
+        return;
       }
-      if (attempts <= 1) {
+      const confirmSignal = describeClimbConfirmSignal(performance);
+      if (confirmSignal) {
         confirm.push({
           profile: {
             student: name,
-            signal: "données encore partielles (une seule voie)",
-            evidence_fields: ["statut"],
+            signal: confirmSignal.text,
+            evidence_fields: ["statut", "cotation"],
             confidence: "low",
           },
-          score: 1 / Math.max(attempts || 1, 1),
+          score: confirmSignal.weight,
         });
       }
     });
-    profiles.to_support = limitProfileEntries(sortProfiles(support).map((entry) => entry.profile));
-    profiles.strengths = limitProfileEntries(sortProfiles(strength).map((entry) => entry.profile));
-    if (!profiles.to_support.length && !profiles.strengths.length) {
-      profiles.to_confirm = limitProfileEntries(sortProfiles(confirm).map((entry) => entry.profile));
-    } else {
-      profiles.to_confirm = limitProfileEntries(sortProfiles(confirm).map((entry) => entry.profile)).slice(0, 2);
-    }
+    profiles.to_support = limitProfileEntries(sortProfiles(support).map((entry) => entry.profile), 2);
+    profiles.strengths = limitProfileEntries(sortProfiles(strengths).map((entry) => entry.profile), 2);
+    profiles.to_confirm = limitProfileEntries(sortProfiles(confirm).map((entry) => entry.profile), PROFILE_MAX_CONFIRM_ENTRIES);
     return profiles;
+  }
+
+  function evaluateClimbStudentPerformance(student = {}) {
+    const attempts = student.attempts || 0;
+    if (!attempts) return null;
+    const statusCounts = student.statusCounts || {};
+    const eCount = statusCounts.E || 0;
+    const e2Count = statusCounts.E2 || 0;
+    const neCount = statusCounts.NE || 0;
+    const otherFailures = Object.entries(statusCounts).reduce((sum, [code, count]) => {
+      if (!SUCCESS_STATUSES.has(code) && code !== "NE") {
+        return sum + (count || 0);
+      }
+      return sum;
+    }, 0);
+    let score = eCount * 2 + e2Count * 1 - neCount * 2 - otherFailures;
+    const successLevels = [];
+    const failureLevels = [];
+    let highFailureCount = 0;
+    let highSuccessCount = 0;
+    (student.levelHistory || []).forEach((entry) => {
+      if (!entry || !entry.status) return;
+      if (SUCCESS_STATUSES.has(entry.status)) {
+        if (entry.level) successLevels.push(entry.level);
+        if (isHighClimbLevel(entry.level)) {
+          score += 1;
+          highSuccessCount += 1;
+        }
+      } else if (entry.status === "NE") {
+        if (entry.level) failureLevels.push(entry.level);
+        if (isHighClimbLevel(entry.level)) {
+          score -= 1;
+          highFailureCount += 1;
+        }
+      }
+    });
+    return {
+      attempts,
+      successes: eCount + e2Count,
+      failures: neCount,
+      successLevels,
+      failureLevels,
+      highFailureCount,
+      highSuccessCount,
+      score,
+      highestLevel: student.highestLevel || null,
+      confidence: attempts >= 4 ? "high" : attempts >= 2 ? "moderate" : "low",
+    };
+  }
+
+  function describeClimbSupportSignal(performance) {
+    if (!performance) return null;
+    if (performance.attempts < CLIMB_MIN_ATTEMPTS_FOR_STRONG_PROFILE) return null;
+    const repeatedFailures = performance.failures >= 2;
+    const zeroSuccess = performance.successes === 0 && performance.attempts >= 3;
+    const highFailures = performance.highFailureCount >= 1;
+    const strongNegative = performance.score <= -4;
+    if (!(repeatedFailures || zeroSuccess || highFailures || strongNegative)) return null;
+    let text = "difficultés répétées à valider les voies";
+    if (highFailures) {
+      const hint = summarizeLevelRange(
+        performance.failureLevels.filter((level) => isHighClimbLevel(level))
+      );
+      if (hint) text = `non-enchaînements ${hint}`;
+      else text = "non-enchaînements sur des voies élevées";
+    } else if (zeroSuccess) {
+      text = `aucune voie validée sur ${performance.attempts} tentative${performance.attempts > 1 ? "s" : ""}`;
+    } else if (performance.failures >= 2) {
+      const list = formatLevelExamples(performance.failureLevels, 2);
+      text = list
+        ? `${performance.failures} non-enchaînements sur ${list}`
+        : `${performance.failures} non-enchaînements successifs`;
+    } else if (strongNegative) {
+      text = "profil globalement en difficulté";
+    }
+    return {
+      text,
+      weight: Math.max(performance.failures, 1) + performance.highFailureCount + Math.max(0, -performance.score),
+      confidence: performance.confidence,
+    };
+  }
+
+  function describeClimbStrengthSignal(performance) {
+    if (!performance) return null;
+    if (performance.attempts < CLIMB_MIN_ATTEMPTS_FOR_STRONG_PROFILE) return null;
+    if (performance.successes < 2) return null;
+    if (performance.score < 4) return null;
+    const levelHint = formatLevelExamples(performance.successLevels, 2) || summarizeLevelRange(performance.successLevels);
+    let text = levelHint ? `réussites répétées sur ${levelHint}` : "réussites répétées et stables";
+    if (performance.highSuccessCount && performance.highestLevel) {
+      text = `réussites régulières jusqu'à ${performance.highestLevel}`;
+    }
+    return {
+      text,
+      weight: performance.successes + performance.highSuccessCount + performance.score / 2,
+      confidence: performance.confidence,
+    };
+  }
+
+  function describeClimbConfirmSignal(performance) {
+    if (!performance) return null;
+    if (performance.attempts < CLIMB_MIN_ATTEMPTS_FOR_CONFIRM) return null;
+    if (performance.attempts >= CLIMB_MIN_ATTEMPTS_FOR_STRONG_PROFILE) return null;
+    if (Math.abs(performance.score) < 2) return null;
+    const attemptLabel =
+      performance.attempts === 1 ? "une seule voie exploitée" : "deux voies exploitées";
+    if (performance.successes >= 2) {
+      const levels = formatLevelExamples(performance.successLevels, 2) || summarizeLevelRange(performance.successLevels);
+      const detail = levels ? `réussites à confirmer sur ${levels}` : "réussites à confirmer";
+      return {
+        text: `${detail} (${attemptLabel})`,
+        weight: performance.score,
+      };
+    }
+    if (performance.failures >= 2) {
+      const levels =
+        formatLevelExamples(performance.failureLevels, 2) || summarizeLevelRange(performance.failureLevels);
+      const detail = levels ? `non-enchaînements sur ${levels}` : "non-enchaînements à confirmer";
+      return {
+        text: `${detail} (${attemptLabel})`,
+        weight: Math.abs(performance.score),
+      };
+    }
+    if (performance.successes === 1) {
+      const level = performance.successLevels[performance.successLevels.length - 1] || null;
+      const detail = level ? `réussite isolée sur ${level}` : "réussite isolée";
+      return {
+        text: `${detail} (${attemptLabel})`,
+        weight: performance.score,
+      };
+    }
+    if (performance.failures === 1 && performance.score <= -2) {
+      const level = performance.failureLevels[performance.failureLevels.length - 1] || null;
+      const detail = level ? `échec isolé sur ${level}` : "échec isolé";
+      return {
+        text: `${detail} (${attemptLabel})`,
+        weight: Math.abs(performance.score),
+      };
+    }
+    return null;
   }
 
   function sortProfiles(entries = []) {
@@ -1407,6 +1581,14 @@
     const unique = Array.from(new Set(levels));
     if (unique.length === 1) return `sur ${unique[0]}`;
     return `entre ${unique[0]} et ${unique[unique.length - 1]}`;
+  }
+
+  function formatLevelExamples(levels = [], limit = 2) {
+    const unique = Array.from(new Set(levels.filter(Boolean)));
+    if (!unique.length) return "";
+    const slice = unique.slice(0, limit);
+    if (slice.length === 1) return slice[0];
+    return `${slice.slice(0, -1).join(" et ")} et ${slice[slice.length - 1]}`;
   }
 
   function isHighClimbLevel(level = "") {
@@ -1423,67 +1605,152 @@
   function buildCrossTrainingStudentProfiles({ students = new Map(), stats = new Map() } = {}) {
     const profiles = createStudentProfileCollection();
     const support = [];
-    const strength = [];
+    const strengths = [];
     const confirm = [];
     stats.forEach((record, key) => {
       const student = students.get(key);
       const name = formatStudentName(student || {});
       if (!name) return;
-      const total = record.total || 0;
-      if (!total) return;
-      const belowCount = record.below || 0;
-      const aboveCount = record.above || 0;
-      const belowShare = belowCount / total;
-      const aboveShare = aboveCount / total;
-      const records = Array.isArray(record.records) ? record.records : [];
-      const belowExercises = records.filter((entry) => entry.classification === "below").map((entry) => entry.label);
-      const aboveExercises = records.filter((entry) => entry.classification === "above").map((entry) => entry.label);
-      const signalSupport = belowExercises.length
-        ? `souvent en dessous du prévu sur ${formatExerciseList(belowExercises)}`
-        : "résultats en dessous du prévu";
-      if ((belowCount >= 2 || belowShare >= 0.5) && belowExercises.length) {
+      const performance = evaluateCrossTrainingStudent(record);
+      if (!performance) return;
+      const supportSignal = describeCrossSupportSignal(performance);
+      if (supportSignal) {
         support.push({
           profile: {
             student: name,
-            signal: signalSupport,
+            signal: supportSignal.text,
             evidence_fields: ["prévu", "réalisé"],
-            confidence: total >= 4 ? "high" : "moderate",
+            confidence: supportSignal.confidence,
           },
-          score: belowCount,
+          score: supportSignal.weight,
         });
         return;
       }
-      const signalStrength = aboveExercises.length
-        ? `atteint ou dépasse régulièrement le prévu sur ${formatExerciseList(aboveExercises)}`
-        : "atteint les objectifs prévus";
-      if ((aboveCount >= 2 || aboveShare >= 0.5) && aboveExercises.length) {
-        strength.push({
+      const strengthSignal = describeCrossStrengthSignal(performance);
+      if (strengthSignal) {
+        strengths.push({
           profile: {
             student: name,
-            signal: signalStrength,
+            signal: strengthSignal.text,
             evidence_fields: ["prévu", "réalisé"],
-            confidence: total >= 4 ? "high" : "moderate",
+            confidence: strengthSignal.confidence,
           },
-          score: aboveCount,
+          score: strengthSignal.weight,
         });
         return;
       }
-      if (total <= 1 || (total <= 2 && belowCount <= 1 && aboveCount <= 1)) {
+      const confirmSignal = describeCrossConfirmSignal(performance);
+      if (confirmSignal) {
         confirm.push({
           profile: {
             student: name,
-            signal: "données partielles (trop peu d'exercices exploitables)",
+            signal: confirmSignal.text,
             evidence_fields: ["prévu", "réalisé"],
             confidence: "low",
           },
-          score: 1,
+          score: confirmSignal.weight,
         });
       }
     });
-    profiles.to_support = limitProfileEntries(sortProfiles(support).map((entry) => entry.profile));
-    profiles.strengths = limitProfileEntries(sortProfiles(strength).map((entry) => entry.profile));
-    profiles.to_confirm = limitProfileEntries(sortProfiles(confirm).map((entry) => entry.profile));
+    profiles.to_support = limitProfileEntries(sortProfiles(support).map((entry) => entry.profile), 2);
+    profiles.strengths = limitProfileEntries(sortProfiles(strengths).map((entry) => entry.profile), 2);
+    profiles.to_confirm = limitProfileEntries(sortProfiles(confirm).map((entry) => entry.profile), PROFILE_MAX_CONFIRM_ENTRIES);
     return profiles;
+  }
+
+  function evaluateCrossTrainingStudent(record = {}) {
+    const entries = Array.isArray(record?.records) ? record.records : [];
+    const total = entries.length || record.total || 0;
+    if (!total) return null;
+    let score = 0;
+    const belowLabels = [];
+    const aboveLabels = [];
+    const markedBelowLabels = [];
+    entries.forEach((entry) => {
+      if (!entry || !entry.classification) return;
+      if (entry.classification === "below") {
+        if (entry.label) belowLabels.push(entry.label);
+        score -= 1;
+        if (entry.marked === "below") {
+          score -= 1;
+          if (entry.label) markedBelowLabels.push(entry.label);
+        }
+      } else if (entry.classification === "above") {
+        if (entry.label) aboveLabels.push(entry.label);
+        score += 1;
+        if (entry.marked === "above") {
+          score += 0.5;
+        }
+      }
+    });
+    const below = belowLabels.length || record.below || 0;
+    const above = aboveLabels.length || record.above || 0;
+    const equal = Math.max(total - below - above, 0);
+    return {
+      total,
+      score,
+      below,
+      above,
+      equal,
+      belowShare: total ? below / total : 0,
+      aboveShare: total ? above / total : 0,
+      belowLabels,
+      aboveLabels,
+      markedBelowLabels,
+      confidence: total >= 5 ? "high" : total >= 3 ? "moderate" : "low",
+    };
+  }
+
+  function describeCrossSupportSignal(performance) {
+    if (!performance) return null;
+    if (performance.total < CROSS_MIN_EXERCISES_FOR_STRONG_PROFILE) return null;
+    const repeated = performance.below >= 2 || performance.belowShare >= 0.5 || performance.score <= -2;
+    if (!repeated && !performance.markedBelowLabels.length) return null;
+    const focusList = performance.markedBelowLabels.length
+      ? performance.markedBelowLabels
+      : performance.belowLabels;
+    const labelText = formatExerciseList(focusList.slice(0, 3));
+    if (!labelText) return null;
+    const text = performance.markedBelowLabels.length
+      ? `écarts marqués sur ${labelText}`
+      : `souvent en dessous du prévu sur ${labelText}`;
+    return {
+      text,
+      weight: Math.max(performance.below, 1) + Math.max(0, -performance.score),
+      confidence: performance.confidence,
+    };
+  }
+
+  function describeCrossStrengthSignal(performance) {
+    if (!performance) return null;
+    if (performance.total < CROSS_MIN_EXERCISES_FOR_STRONG_PROFILE) return null;
+    if (performance.above < 2 && performance.aboveShare < 0.5 && performance.score < 2) return null;
+    const labelText = formatExerciseList(performance.aboveLabels.slice(0, 3));
+    if (!labelText) return null;
+    return {
+      text: `atteint ou dépasse régulièrement le prévu sur ${labelText}`,
+      weight: performance.score + performance.above,
+      confidence: performance.confidence,
+    };
+  }
+
+  function describeCrossConfirmSignal(performance) {
+    if (!performance) return null;
+    if (performance.total > CROSS_MAX_EXERCISES_FOR_CONFIRM) return null;
+    if (Math.abs(performance.score) < 1) return null;
+    const referenceList = performance.score > 0 ? performance.aboveLabels : performance.belowLabels;
+    if (!referenceList.length) return null;
+    const labelText = formatExerciseList(referenceList.slice(0, 1));
+    if (!labelText) return null;
+    const attemptsText = performance.total === 1 ? "un seul exercice exploitable" : "deux exercices exploitables";
+    const text =
+      performance.score > 0
+        ? `réussite isolée sur ${labelText} (${attemptsText})`
+        : `écart négatif isolé sur ${labelText} (${attemptsText})`;
+    return {
+      text,
+      weight: Math.abs(performance.score),
+    };
   }
 
   function formatExerciseList(list = []) {

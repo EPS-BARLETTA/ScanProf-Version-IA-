@@ -64,7 +64,9 @@
     .ai-btn.outline{background:transparent;border-color:var(--sp-border);}
     .ai-btn.danger{border-color:var(--sp-accent-red,#c00);color:var(--sp-accent-red,#c00);background:transparent;}
     .ai-btn.text{background:none;border:none;color:var(--sp-muted);padding:0;text-decoration:underline;}
-    .ai-actions-grid{display:grid;grid-template-columns:1fr;gap:10px;}
+    .ai-actions-grid{display:grid;grid-template-columns:1fr;gap:12px;margin:12px 0 6px;}
+    #ai-action-assistant{font-size:1rem;font-weight:600;padding:12px 18px;}
+    #ai-open-dictionary-inline{display:block;width:100%;text-align:center;margin-bottom:8px;}
     .ai-status{min-height:1.1em;font-size:0.85rem;color:var(--sp-muted);}
     .ai-status.success{color:var(--sp-accent-green,#2e8b57);}
     .ai-status.error{color:var(--sp-accent-red,#c0392b);}
@@ -258,11 +260,13 @@
       <div class="ai-dictionary-hint ai-dictionary-hint--empty" id="ai-dictionary-hint">Chargement du référentiel en cours...</div>
       <div class="ai-dictionary-alert sp-hidden" id="ai-dictionary-alert"></div>
       <div class="ai-actions-grid">
-        <button type="button" class="ai-btn primary" id="ai-action-bilan">Bilan de la séance</button>
-        <button type="button" class="ai-btn outline" id="ai-action-difficulte">Élèves en difficulté</button>
-        <button type="button" class="ai-btn outline" id="ai-action-points">Points forts</button>
-        <button type="button" class="ai-btn outline" id="ai-action-suivi">Préparer la séance suivante</button>
+        <button type="button" class="ai-btn primary" id="ai-action-assistant">
+          🚀 Analyser la séance
+        </button>
       </div>
+      <button type="button" class="ai-btn outline" id="ai-open-dictionary-inline">
+        📘 Gérer le référentiel
+      </button>
       <div class="ai-status" id="ai-run-status"></div>
       <div class="ai-question">
         <label class="ai-field">Poser une question sur la séance

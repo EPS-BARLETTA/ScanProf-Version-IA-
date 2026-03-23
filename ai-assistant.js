@@ -499,11 +499,13 @@
       summaryCount: document.getElementById("ai-summary-count"),
       summaryTypes: document.getElementById("ai-summary-types"),
       actionButtons: {
+        assistant: document.getElementById("ai-action-assistant"),
         bilan: document.getElementById("ai-action-bilan"),
         difficulte: document.getElementById("ai-action-difficulte"),
         points: document.getElementById("ai-action-points"),
         suivi: document.getElementById("ai-action-suivi"),
       },
+      dictionaryInlineBtn: document.getElementById("ai-open-dictionary-inline"),
       questionSuggestions: document.querySelectorAll(".ai-question-suggestion"),
       modal: document.getElementById("ai-modal"),
       modalClose: document.getElementById("ai-modal-close"),
@@ -531,10 +533,12 @@
     refs.saveBtn?.addEventListener("click", saveApiKey);
     refs.deleteBtn?.addEventListener("click", deleteApiKey);
     refs.testBtn?.addEventListener("click", testConnection);
+    refs.actionButtons?.assistant?.addEventListener("click", () => handleAnalysis("bilan"));
     refs.actionButtons?.bilan?.addEventListener("click", () => handleAnalysis("bilan"));
     refs.actionButtons?.difficulte?.addEventListener("click", () => handleAnalysis("difficulte"));
     refs.actionButtons?.points?.addEventListener("click", () => handleAnalysis("points_forts"));
     refs.actionButtons?.suivi?.addEventListener("click", () => handleAnalysis("suivi"));
+    refs.dictionaryInlineBtn?.addEventListener("click", () => openDictionaryPanel());
     refs.questionBtn?.addEventListener("click", handleQuestion);
     refs.notesField?.addEventListener("input", handleNotesChange);
     refs.interpretationField?.addEventListener("input", handleInterpretationChange);
