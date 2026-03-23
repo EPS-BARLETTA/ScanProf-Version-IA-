@@ -4,7 +4,10 @@
   const STATE_EVENT = "scanprof:dictionary-state-changed";
   const AI_CONTEXT_KEY = "scanprof_ai_context";
   const api = window.ScanProfAIDictionaries;
-  if (!api) return;
+  if (!api) {
+    console.error("[ScanProf Dictionary] API non chargée (ScanProfAIDictionaries introuvable).");
+    return;
+  }
 
   const state = {
     selectedId: "",
@@ -17,6 +20,7 @@
   document.addEventListener("DOMContentLoaded", init);
 
   function init() {
+    console.debug("[ScanProf Dictionary] init start", { hasApi: !!api });
     refs.openBtn = document.getElementById("ai-dictionary-open-btn");
     refs.modal = document.getElementById("ai-dictionary-modal");
     refs.closeBtn = document.getElementById("ai-dictionary-close");
@@ -59,7 +63,10 @@
     refs.applyBtn = document.getElementById("ai-dictionary-apply-btn");
     refs.resetBtn = document.getElementById("ai-dictionary-reset-btn");
 
-    if (!refs.modal) return;
+    if (!refs.modal) {
+      console.error("[ScanProf Dictionary] Modal introuvable (#ai-dictionary-modal).");
+      return;
+    }
 
     refs.openBtn?.addEventListener("click", () => openModal());
     refs.closeBtn?.addEventListener("click", closeModal);
@@ -101,6 +108,7 @@
 
   function openModal(activityName) {
     if (!refs.modal) return;
+    console.debug("[ScanProf Dictionary] openModal", { activityName: activityName || null });
     refs.modal.classList.remove("sp-hidden");
     renderModal(activityName);
   }
@@ -111,6 +119,7 @@
   }
 
   function renderModal(activityName) {
+    console.debug("[ScanProf Dictionary] renderModal", { incomingActivity: activityName || null });
     state.currentActivityName = activityName || state.currentActivityName || getCurrentActivityName();
     renderCurrentSection(state.currentActivityName);
     renderSelector();
@@ -164,30 +173,45 @@
   }
 
   function renderSelector() {
-    if (!refs.select) return;
+    console.debug("[ScanProf Dictionary] renderSelector invoked");
+    if (!refs.select) {
+      console.error("[ScanProf Dictionary] refs.select introuvable.");
+      return;
+    }
+    console.debug("[ScanProf Dictionary] select before", {
+      node: refs.select,
+      outerHTML: refs.select.outerHTML,
+    });
     const previous = refs.select.value || state.selectedId || "";
     const dictionaries = getCatalogueDictionaries()
       .slice()
       .sort((a, b) => (a.label || "").localeCompare(b.label || ""));
-    console.debug("[ScanProf Dictionary] renderSelector", {
+    console.debug("[ScanProf Dictionary] renderSelector dictionaries", {
       previous,
       dictionaryCount: dictionaries.length,
       labels: dictionaries.map((dict) => dict.label || dict.id),
     });
-    refs.select.innerHTML =
-      `<option value="">Sélectionner...</option>` +
-      dictionaries
-        .map(
-          (dict) =>
-            `<option value="${escapeHtml(dict.id)}"${dict.id === previous ? " selected" : ""}>${escapeHtml(dict.label)}${
-              dict.source === "custom" ? " (perso)" : ""
-            }</option>`
-        )
-        .join("");
+    let optionsHtml = `<option value="">Sélectionner...</option><option value="test_app">TEST APP</option>`;
+    const defaultOptions = dictionaries
+      .map(
+        (dict) =>
+          `<option value="${escapeHtml(dict.id)}"${dict.id === previous ? " selected" : ""}>${escapeHtml(dict.label)}${
+            dict.source === "custom" ? " (perso)" : ""
+          }</option>`
+      )
+      .join("");
+    if (!defaultOptions) {
+      console.warn("[ScanProf Dictionary] Aucun dictionnaire détecté, injection fallback défaut.");
+      optionsHtml += getDefaultFallbackOptions(previous);
+    } else {
+      optionsHtml += defaultOptions;
+    }
+    refs.select.innerHTML = optionsHtml;
     state.selectedId = refs.select.value || "";
     console.debug("[ScanProf Dictionary] renderSelector result", {
       selectedId: state.selectedId,
       selectHtmlLength: refs.select.innerHTML.length,
+      outerHTML: refs.select.outerHTML,
     });
     renderSelectedDetails();
     updateApplyResetControls();
@@ -234,6 +258,16 @@
       labels: (dictionaries || []).map((dict) => dict.label || dict.id),
     });
     return dictionaries;
+  }
+
+  function getDefaultFallbackOptions(previousId = "") {
+    if (!api || !api.DEFAULT_DICTIONARIES) return "";
+    return Object.values(api.DEFAULT_DICTIONARIES)
+      .map((dict) => {
+        const selected = dict.id === previousId ? " selected" : "";
+        return `<option value="${escapeHtml(dict.id)}"${selected}>${escapeHtml(dict.label)} (défaut)</option>`;
+      })
+      .join("");
   }
 
   function logCatalogueDebug(info) {

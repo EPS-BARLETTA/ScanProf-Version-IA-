@@ -814,14 +814,14 @@
       const summary = summarizeDataset();
       const manualInterpretation = refs.interpretationField?.value || localStorage.getItem(STORAGE.INTERPRETATION) || "";
       const autoDictionary = getActivityDictionary(currentContext.activityName || storedContext.activite || "");
+      const manualEntry = getManualDictionaryEntry(storedContext);
+      const manualDictionary = manualEntry?.dictionary || null;
       logDebug("Dictionary detection state", {
         storedActivity: storedContext.activite || null,
         manualDictionaryId: manualEntry?.dictionaryId || null,
         autoDictionaryId: autoDictionary?.id || null,
       });
       rememberAutoDictionary(storedContext, autoDictionary);
-      const manualEntry = getManualDictionaryEntry(storedContext);
-      const manualDictionary = manualEntry?.dictionary || null;
       const dictionaryToUse = manualDictionary || autoDictionary;
       logDebug("Dictionary to use", { id: dictionaryToUse?.id || null, label: dictionaryToUse?.label || null });
       const retentionPlan = buildColumnRetentionPlan(summary.columns || [], dictionaryToUse, manualInterpretation);
