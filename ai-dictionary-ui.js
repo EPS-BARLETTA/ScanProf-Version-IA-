@@ -389,10 +389,22 @@
   }
 
   function getDictionaryStateSnapshot() {
-    const context = getStoredAIContext();
+    const context = safeGetStoredAIContext();
     const manager = window.ScanProfDictionaryState;
     if (!context || !manager || typeof manager.getStateForContext !== "function") return { manual: null, auto: null };
     return manager.getStateForContext(context) || { manual: null, auto: null };
+  }
+
+  function safeGetStoredAIContext() {
+    try {
+      const raw = localStorage.getItem(AI_CONTEXT_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (err) {
+      console.error("[ScanProf Dictionary] getStoredAIContext unavailable", err);
+      return null;
+    }
   }
 
   function updateDictionaryMeta({ activityName, dictionary, stateSnapshot }) {
