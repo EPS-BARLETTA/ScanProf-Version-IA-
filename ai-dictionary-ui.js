@@ -1,4 +1,5 @@
 (function () {
+  console.log("[ScanProf Dictionary] ai-dictionary-ui loaded");
   const OPEN_EVENT = "scanprof:open-dictionary";
   const DICTIONARY_EVENT = "scanprof:dictionaries-changed";
   const STATE_EVENT = "scanprof:dictionary-state-changed";
@@ -20,6 +21,7 @@
   document.addEventListener("DOMContentLoaded", init);
 
   function init() {
+    console.log("[ScanProf Dictionary] init called");
     console.debug("[ScanProf Dictionary] init start", { hasApi: !!api });
     refs.openBtn = document.getElementById("ai-dictionary-open-btn");
     refs.modal = document.getElementById("ai-dictionary-modal");
@@ -173,11 +175,12 @@
   }
 
   function renderSelector() {
-    console.debug("[ScanProf Dictionary] renderSelector invoked");
+    console.log("[ScanProf Dictionary] renderSelector running");
     if (!refs.select) {
       console.error("[ScanProf Dictionary] refs.select introuvable.");
       return;
     }
+    console.log("[ScanProf Dictionary] select before", refs.select?.outerHTML || null);
     const previous = refs.select.value || state.selectedId || "";
     const forcedOptions = [
       { id: "", label: "Sélectionner...", selected: previous === "" },
@@ -192,6 +195,8 @@
       )
       .join("");
     refs.select.innerHTML = forcedOptions;
+    console.log("[ScanProf Dictionary] option labels", Array.from(refs.select.options || []).map((opt) => opt.textContent));
+    console.log("[ScanProf Dictionary] options length after", refs.select.options?.length || 0);
     state.selectedId = refs.select.value || "";
     console.debug("[ScanProf Dictionary] forced select content", {
       outerHTML: refs.select.outerHTML,
