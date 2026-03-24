@@ -78,7 +78,7 @@
     synthese: { source: "overview", type: "text", limit: 3 },
     points_forts: { source: "strengths", type: "list", limit: 3 },
     points_a_retravailler: { source: "needs_work", type: "list", limit: 3 },
-    suite: { source: "next_steps", type: "list", limit: 3 },
+    suite_proposee: { source: "next_steps", type: "list", limit: 3 },
     priorites: { source: "next_steps", type: "list", limit: 3 },
     suggestions: { source: "next_steps", type: "list", limit: 3 },
   };

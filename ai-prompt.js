@@ -4,7 +4,7 @@
       { key: "synthese", label: "Synthèse", type: "text" },
       { key: "points_forts", label: "Points forts", type: "list" },
       { key: "points_a_retravailler", label: "Points à retravailler", type: "list" },
-      { key: "suite", label: "Suite proposée", type: "list" },
+      { key: "suite_proposee", label: "Suite proposée", type: "list" },
       { key: "reperages_eleves", label: "Repérages élèves", type: "list" },
     ],
     difficulte: [
@@ -40,12 +40,203 @@
     test: "Réponds simplement par la chaîne «OK» si tout est clair.",
   };
 
+  const REFERENTIAL_ALIASES = {
+    climb_track: "climb_track",
+    "climb track": "climb_track",
+    climbtrack: "climb_track",
+    "arcathlon v2": "arcathlon_v2",
+    arcathlon_v2: "arcathlon_v2",
+    arcathlon: "arcathlon_v2",
+    "arc athlon v2": "arcathlon_v2",
+    "cross training": "cross_training",
+    crosstraining: "cross_training",
+    cross_training: "cross_training",
+    "cross-training": "cross_training",
+  };
+
+  const REFERENTIAL_BLOCKS = {
+    arcathlon_v2: buildArcAthlonBlock,
+    cross_training: buildCrossTrainingBlock,
+  };
+
   function buildPrompt({ analysisInput, mode = "bilan" }) {
     const payload = analysisInput || {};
     const contexte = payload.contexte || {};
     const objectif = MODE_OBJECTIVES[mode] || MODE_OBJECTIVES.bilan;
     const schema = MODE_SCHEMAS[mode] || SECTION_SCHEMA;
-    const instructions = [
+    const referentiel = detectReferential({ contexte, payload });
+    const sessionMeta = {
+      activityLabel:
+        contexte.activite ||
+        contexte.activity_label ||
+        contexte.dictionnaire_activite?.label ||
+        payload.class_analytics?.context?.activity_label ||
+        "",
+      dictionaryId:
+        contexte.dictionnaire_activite?.id ||
+        payload.class_analytics?.context?.dictionary_id ||
+        "",
+    };
+    const datasetSummary = {
+      hasSummarySentences: Boolean(payload.summary_sentences || payload.class_analytics?.summary_sentences),
+      hasClassAnalytics: Boolean(payload.class_analytics),
+    };
+    const pedagogicalRules = {
+      hasStudentProfiles: Boolean(payload.student_profiles || payload.student_profile_sentences),
+    };
+    const useLegacy = mode !== "bilan" || referentiel === "climb_track";
+    const instructions = useLegacy
+      ? buildLegacyInstructions({ schema, objective: objectif, mode })
+      : buildAIPrompt({
+          referentiel,
+          sessionMeta,
+          datasetSummary,
+          pedagogicalRules,
+          schema,
+          objective: objectif,
+          mode,
+        });
+
+  const content = {
+      contexte,
+      intention: mode,
+      donnees_eleves: payload.eleves || [],
+      question: payload.questionText || "",
+      interpretation: payload.interpretation || null,
+      pre_analysis: payload.pre_analysis || null,
+      summary_sentences: payload.summary_sentences || payload.class_analytics?.summary_sentences || null,
+      student_profiles: payload.student_profiles || payload.class_analytics?.student_profiles || null,
+      student_profile_sentences:
+        payload.student_profile_sentences || payload.class_analytics?.student_profile_sentences || null,
+      class_analytics: payload.class_analytics || null,
+    };
+
+  const messages = [
+      {
+        role: "system",
+        content:
+          "Tu es un assistant pédagogique francophone spécialisé en analyse de séances d'EPS. Réponds toujours en français et fournis des recommandations concrètes.",
+      },
+      {
+        role: "user",
+        content: `${instructions}\n\nDonnées structurées :\n\`\`\`json\n${JSON.stringify(
+          content
+        )}\n\`\`\``,
+      },
+    ];
+
+    return { messages, schema };
+  }
+
+  function buildAIPrompt({
+    referentiel,
+    sessionMeta = {},
+    datasetSummary = {},
+    pedagogicalRules = {},
+    schema,
+    objective,
+    mode,
+  }) {
+    const schemaStructure = buildStructureHint(schema);
+    const sections = [
+      buildCommonPromptSection({ schemaStructure, datasetSummary, pedagogicalRules }),
+      buildReferentialBlock(referentiel, sessionMeta),
+      mode === "question"
+        ? "Réponds obligatoirement à la question fournie en t’appuyant sur les données de séance. N’invente jamais de valeur."
+        : null,
+      objective,
+    ];
+    return sections.filter(Boolean).join("\n\n");
+  }
+
+  function buildCommonPromptSection({ schemaStructure, datasetSummary = {}, pedagogicalRules = {} }) {
+    const summaryHint = datasetSummary.hasSummarySentences
+      ? "- Utilise en priorité `summary_sentences` : `overview` pour la synthèse, `strengths` pour les points forts, `needs_work` pour les points à retravailler et `next_steps` pour la suite."
+      : "- `summary_sentences` peut être vide : construis alors chaque section directement à partir de `class_analytics`, `pre_analysis` et des données brutes.";
+    const profileHint = pedagogicalRules.hasStudentProfiles
+      ? "- Les prénoms cités dans « repérages élèves » proviennent uniquement de `student_profiles` / `student_profile_sentences`."
+      : "- Si aucun profil nominatif fiable n'est fourni, renvoie `reperages_eleves: []`.";
+    const lines = [
+      "Tu es un assistant pédagogique francophone pour des enseignants d'EPS.",
+      "SOCLE COMMUN — livrables attendus :",
+      "1. Synthèse courte de la séance (≤ 12 mots).",
+      "2. 2 à 4 points forts concrets basés sur les données transmises.",
+      "3. 2 à 4 points à retravailler en reliant chaque constat aux données observables.",
+      "4. 2 à 4 suites pédagogiques concrètes et actionnables.",
+      "5. Un bloc « repérages élèves » uniquement si des signaux nominaux fiables existent.",
+      "",
+      "Méthode générale :",
+      "- Analyse uniquement les données transmises. Si une information manque, signale la limite sans inventer.",
+      "- Respecte l'ordre : 1) données factuelles, 2) dictionnaire métier, 3) précisions enseignant.",
+      "- Signale tout code, suffixe ou niveau non documenté plutôt que d'en déduire une signification.",
+      "- Les aides d'interprétation (`interpretation`) complètent les données mais ne les remplacent jamais.",
+      summaryHint,
+      "- Appuie-toi ensuite sur `class_analytics` (context, data_quality, distributions, measures, comparisons, student_groups, pedagogical_signals, limits) pour enrichir l'analyse sans recalculer.",
+      "- Exploite `pre_analysis` : restitue `known_facts`, `allowed_comparisons`, `pedagogical_signals`, et mentionne les `unknown_codes` avec prudence.",
+      "- Si les données sont partielles, maintiens une lecture utile et prudente plutôt que de répondre « Aucune information disponible ».",
+      "- Chaque champ texte se limite à une phrase simple (≤ 12 mots).",
+      "- Chaque liste contient 2 à 4 éléments courts quand une information existe ; sinon renvoie [].",
+      "- Utilise les pourcentages et volumes fournis pour formuler « la moitié », « un tiers », « X % » sans extrapoler.",
+      "- Tu peux citer un code ou une colonne pour souligner une limite ou une consigne claire.",
+      "- N'utilise jamais de markdown ni de blocs ``` dans la réponse finale.",
+      profileHint,
+      "- Structure ta réponse en JSON strict, sans texte avant ou après, en respectant exactement ce format :",
+      schemaStructure,
+      'Chaque clé est obligatoire : "synthese", "points_forts", "points_a_retravailler", "suite_proposee", "reperages_eleves". N\'ajoute aucun autre champ.',
+    ];
+    return lines.filter(Boolean).join("\n");
+  }
+
+  function buildReferentialBlock(referentiel, sessionMeta = {}) {
+    if (!referentiel) {
+      return buildFallbackReferentialBlock(sessionMeta.activityLabel);
+    }
+    const builder = REFERENTIAL_BLOCKS[referentiel];
+    if (typeof builder === "function") {
+      return builder();
+    }
+    return buildFallbackReferentialBlock(sessionMeta.activityLabel);
+  }
+
+  function buildFallbackReferentialBlock(activityLabel = "") {
+    const activityText = activityLabel ? ` pour l'activité « ${activityLabel} »` : "";
+    return [
+      `Bloc prudent${activityText} :`,
+      "- Aucun référentiel spécifique reconnu. Reste descriptif et factuel.",
+      "- Signale clairement les limites dues à l'absence de référentiel ou à des colonnes non documentées.",
+      "- Repère malgré tout les tendances simples (volumes, moyennes, écarts) dès qu'elles sont explicites.",
+    ].join("\n");
+  }
+
+  function buildArcAthlonBlock() {
+    return [
+      "Bloc spécifique — ArcAthlon V2 :",
+      "- Codes disponibles : distance, indice_arc, nb_10 à nb_6, points_max, points_total, zone_entries, zone2_points, zone2_shots.",
+      "- Compare points_total à points_max pour situer la marge de progression globale.",
+      "- Analyse la distribution des scores (nb_10 → nb_6) pour décrire la précision et la régularité.",
+      "- Observe zone_entries, zone2_points et zone2_shots pour lire l'activité et l'efficacité en zone 2.",
+      "- Compare les distances uniquement si le protocole de séance est identique ; sinon mentionne la limite.",
+      "- Interprète indice_arc avec prudence si la formule exacte n'est pas fournie.",
+      "- Signaux attendus : précision solide (beaucoup de 10/9), dispersion des impacts, marge entre points_total et points_max, rendement zone 2 (bon ou insuffisant), nombreuses entrées peu efficaces.",
+      "- Limites : n'invente jamais la formule d'indice_arc, ne surinterprète pas une variation isolée et base tes conclusions uniquement sur les scores saisis.",
+    ].join("\n");
+  }
+
+  function buildCrossTrainingBlock() {
+    return [
+      "Bloc spécifique — CrossTraining :",
+      "- Codes ateliers : bu (burpees), cr (crunch), di (dips), fe (fentes), jk (jumping jack), mt (mountain climber), sa (saut), po (pompes), ra (rameur), sq (squat).",
+      "- Suffixes : `_p` (prévu), `_r` (réalisé), `_l` (niveau/difficulté), `_1` (N1) et `_2` (N2). Les abréviations ajoutées par l'enseignant priment.",
+      "- Compare systématiquement prévu (_p) et réalisé (_r) pour repérer la gestion de l'effort et la régularité sur chaque atelier.",
+      "- Repère les écarts significatifs (≈10-15 % ou plus) : ils signalent soit une difficulté de dosage/endurance soit un engagement supérieur au plan.",
+      "- Valorise les élèves/ateliers qui réalisent la majorité du prévu ou qui dépassent régulièrement l'objectif.",
+      "- Signale les blocages récurrents sur un même atelier ou des écarts importants entre niveaux (N1 vs N2) pour justifier une différenciation.",
+      "- Limites : ne déduis aucune explication physiologique si elle n'est pas observée et reste prudent si certaines colonnes prévues/réalisées manquent.",
+    ].join("\n");
+  }
+
+  function buildLegacyInstructions({ schema, objective, mode }) {
+    const lines = [
       "Tu es un assistant pédagogique francophone pour des enseignants d'EPS.",
       "Analyse uniquement les données transmises. Si une information est absente, indique-le clairement sans l'inventer.",
       "Les colonnes détectées sont fournies dans le contexte. Si aucune signification n'est précisée, reste descriptif et indique que l'abréviation n'a pas été expliquée.",
@@ -78,40 +269,37 @@
       mode === "question"
         ? "Réponds obligatoirement à la question fournie en t’appuyant sur les données de séance. N’invente jamais de valeur."
         : null,
-      objectif,
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-  const content = {
-      contexte,
-      intention: mode,
-      donnees_eleves: payload.eleves || [],
-      question: payload.questionText || "",
-      interpretation: payload.interpretation || null,
-      pre_analysis: payload.pre_analysis || null,
-      summary_sentences: payload.summary_sentences || payload.class_analytics?.summary_sentences || null,
-      student_profiles: payload.student_profiles || payload.class_analytics?.student_profiles || null,
-      student_profile_sentences:
-        payload.student_profile_sentences || payload.class_analytics?.student_profile_sentences || null,
-      class_analytics: payload.class_analytics || null,
-    };
-
-  const messages = [
-      {
-        role: "system",
-        content:
-          "Tu es un assistant pédagogique francophone spécialisé en analyse de séances d'EPS. Réponds toujours en français et fournis des recommandations concrètes.",
-      },
-      {
-        role: "user",
-        content: `${instructions}\n\nDonnées structurées :\n\`\`\`json\n${JSON.stringify(
-          content
-        )}\n\`\`\``,
-      },
+      objective,
     ];
+    return lines.filter(Boolean).join("\n");
+  }
 
-    return { messages, schema };
+  function detectReferential({ contexte = {}, payload = {} }) {
+    const dictionary = contexte.dictionnaire_activite || {};
+    const analyticsContext = payload.class_analytics?.context || {};
+    const candidates = [
+      dictionary.id,
+      dictionary.label,
+      contexte.activity_id,
+      contexte.activity_label,
+      contexte.activite,
+      analyticsContext.activity_id,
+      analyticsContext.activity_label,
+      analyticsContext.dictionary_id,
+    ].filter(Boolean);
+    for (let i = 0; i < candidates.length; i += 1) {
+      const normalized = normalizeReferentialName(candidates[i]);
+      if (!normalized) continue;
+      if (REFERENTIAL_ALIASES[normalized]) {
+        return REFERENTIAL_ALIASES[normalized];
+      }
+    }
+    return null;
+  }
+
+  function normalizeReferentialName(value) {
+    if (!value && value !== 0) return "";
+    return String(value).trim().toLowerCase();
   }
 
   window.ScanProfAIPrompt = {
