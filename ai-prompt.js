@@ -84,6 +84,8 @@
     const pedagogicalRules = {
       hasStudentProfiles: Boolean(payload.student_profiles || payload.student_profile_sentences),
     };
+    const dataset = Array.isArray(payload.donnees_eleves) ? payload.donnees_eleves : payload.eleves || [];
+    const datasetSignals = analyzeDatasetSignals({ referentiel, dataset });
     const useLegacy = mode !== "bilan" || referentiel === "climb_track";
     const instructions = useLegacy
       ? buildLegacyInstructions({ schema, objective: objectif, mode })
@@ -95,6 +97,7 @@
           schema,
           objective: objectif,
           mode,
+          datasetSignals,
         });
 
   const content = {
@@ -136,11 +139,13 @@
     schema,
     objective,
     mode,
+    datasetSignals = {},
   }) {
     const schemaStructure = buildStructureHint(schema);
+    const prioritizeSummary = referentiel !== "arcathlon_v2" && referentiel !== "cross_training";
     const sections = [
-      buildCommonPromptSection({ schemaStructure, datasetSummary, pedagogicalRules }),
-      buildReferentialBlock(referentiel, sessionMeta),
+      buildCommonPromptSection({ schemaStructure, datasetSummary, pedagogicalRules, prioritizeSummary }),
+      buildReferentialBlock(referentiel, sessionMeta, datasetSignals),
       mode === "question"
         ? "Réponds obligatoirement à la question fournie en t’appuyant sur les données de séance. N’invente jamais de valeur."
         : null,
@@ -149,10 +154,17 @@
     return sections.filter(Boolean).join("\n\n");
   }
 
-  function buildCommonPromptSection({ schemaStructure, datasetSummary = {}, pedagogicalRules = {} }) {
-    const summaryHint = datasetSummary.hasSummarySentences
-      ? "- Utilise en priorité `summary_sentences` : `overview` pour la synthèse, `strengths` pour les points forts, `needs_work` pour les points à retravailler et `next_steps` pour la suite."
-      : "- `summary_sentences` peut être vide : construis alors chaque section directement à partir de `class_analytics`, `pre_analysis` et des données brutes.";
+  function buildCommonPromptSection({
+    schemaStructure,
+    datasetSummary = {},
+    pedagogicalRules = {},
+    prioritizeSummary = true,
+  }) {
+    const summaryHint = prioritizeSummary
+      ? datasetSummary.hasSummarySentences
+        ? "- Utilise en priorité `summary_sentences` : `overview` pour la synthèse, `strengths` pour les points forts, `needs_work` pour les points à retravailler et `next_steps` pour la suite."
+        : "- `summary_sentences` peut être vide : construis alors chaque section directement à partir de `class_analytics`, `pre_analysis` et des données brutes."
+      : "- Commence par analyser `donnees_eleves`, `pre_analysis` et `class_analytics`, puis n'utilise `summary_sentences` qu'en complément lorsqu'elles apportent des constats fiables.";
     const profileHint = pedagogicalRules.hasStudentProfiles
       ? "- Les prénoms cités dans « repérages élèves » proviennent uniquement de `student_profiles` / `student_profile_sentences`."
       : "- Si aucun profil nominatif fiable n'est fourni, renvoie `reperages_eleves: []`.";
@@ -187,13 +199,13 @@
     return lines.filter(Boolean).join("\n");
   }
 
-  function buildReferentialBlock(referentiel, sessionMeta = {}) {
+  function buildReferentialBlock(referentiel, sessionMeta = {}, datasetSignals = {}) {
     if (!referentiel) {
       return buildFallbackReferentialBlock(sessionMeta.activityLabel);
     }
     const builder = REFERENTIAL_BLOCKS[referentiel];
     if (typeof builder === "function") {
-      return builder();
+      return builder(datasetSignals);
     }
     return buildFallbackReferentialBlock(sessionMeta.activityLabel);
   }
@@ -208,7 +220,11 @@
     ].join("\n");
   }
 
-  function buildArcAthlonBlock() {
+  function buildArcAthlonBlock(datasetSignals = {}) {
+    const arcFields = datasetSignals.arcathlonFields || [];
+    const arcFieldNote = arcFields.length
+      ? `- Données brutes détectées : ${arcFields.join(", ")}. Analyse-les directement avant de te référer à un résumé.`
+      : "- Analyse directement les champs nb_10→nb_6, points_total, points_max et zone2_* lorsqu'ils sont présents.";
     return [
       "Bloc spécifique — ArcAthlon V2 :",
       "- Codes disponibles : distance, indice_arc, nb_10 à nb_6, points_max, points_total, zone_entries, zone2_points, zone2_shots.",
@@ -217,17 +233,23 @@
       "- Observe zone_entries, zone2_points et zone2_shots pour lire l'activité et l'efficacité en zone 2.",
       "- Compare les distances uniquement si le protocole de séance est identique ; sinon mentionne la limite.",
       "- Interprète indice_arc avec prudence si la formule exacte n'est pas fournie.",
+      arcFieldNote,
       "- Signaux attendus : précision solide (beaucoup de 10/9), dispersion des impacts, marge entre points_total et points_max, rendement zone 2 (bon ou insuffisant), nombreuses entrées peu efficaces.",
       "- Limites : n'invente jamais la formule d'indice_arc, ne surinterprète pas une variation isolée et base tes conclusions uniquement sur les scores saisis.",
     ].join("\n");
   }
 
-  function buildCrossTrainingBlock() {
+  function buildCrossTrainingBlock(datasetSignals = {}) {
+    const planColumns = datasetSignals.crossPlanColumns || [];
+    const planNote = planColumns.length
+      ? `- Colonnes prévu/réalisé détectées : ${planColumns.join(", ")}. Exploite-les systématiquement pour comparer l'engagement.`
+      : "- Si les colonnes *_p / *_r sont absentes, précise que la comparaison prévu/réalisé est limitée.";
     return [
       "Bloc spécifique — CrossTraining :",
       "- Codes ateliers : bu (burpees), cr (crunch), di (dips), fe (fentes), jk (jumping jack), mt (mountain climber), sa (saut), po (pompes), ra (rameur), sq (squat).",
       "- Suffixes : `_p` (prévu), `_r` (réalisé), `_l` (niveau/difficulté), `_1` (N1) et `_2` (N2). Les abréviations ajoutées par l'enseignant priment.",
       "- Compare systématiquement prévu (_p) et réalisé (_r) pour repérer la gestion de l'effort et la régularité sur chaque atelier.",
+      planNote,
       "- Repère les écarts significatifs (≈10-15 % ou plus) : ils signalent soit une difficulté de dosage/endurance soit un engagement supérieur au plan.",
       "- Valorise les élèves/ateliers qui réalisent la majorité du prévu ou qui dépassent régulièrement l'objectif.",
       "- Signale les blocages récurrents sur un même atelier ou des écarts importants entre niveaux (N1 vs N2) pour justifier une différenciation.",
@@ -300,6 +322,34 @@
   function normalizeReferentialName(value) {
     if (!value && value !== 0) return "";
     return String(value).trim().toLowerCase();
+  }
+
+  function analyzeDatasetSignals({ referentiel, dataset = [] }) {
+    const keySet = new Set();
+    dataset.forEach((entry) => {
+      if (!entry || typeof entry !== "object") return;
+      Object.keys(entry).forEach((key) => keySet.add(key));
+    });
+    const allKeys = Array.from(keySet);
+    const lowerKeys = allKeys.map((key) => key.toLowerCase());
+    const crossPlanColumns = allKeys.filter((key) => /(_p|_r)$/i.test(key));
+    const arcathlonFieldsList = [
+      "nb_10",
+      "nb_9",
+      "nb_8",
+      "nb_7",
+      "nb_6",
+      "points_total",
+      "points_max",
+      "zone_entries",
+      "zone2_points",
+      "zone2_shots",
+    ].filter((field) => lowerKeys.includes(field));
+    return {
+      allKeys,
+      crossPlanColumns,
+      arcathlonFields: arcathlonFieldsList,
+    };
   }
 
   window.ScanProfAIPrompt = {
