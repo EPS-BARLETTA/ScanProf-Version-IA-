@@ -102,6 +102,7 @@
   let lastQuestionText = "";
   let lastDictionaryCoverage = null;
   let lastActivityName = "";
+  let lastCycleDiagnostics = { totalCandidates: 0, retained: 0 };
 
   document.addEventListener("DOMContentLoaded", initAssistant);
 
@@ -966,10 +967,12 @@
         interpretationEngine,
         analyticsEngine,
       });
+      const cycleDiagnostics = getCycleDiagnostics();
       updateModeIndicators({
         cycleBundle,
         sessionBundle,
-        cycleCandidateCount: cycleSessions.length || 0,
+        cycleCandidateCount: cycleDiagnostics.totalCandidates || 0,
+        cycleRetainedCount: cycleDiagnostics.retained || 0,
       });
       if (cycleBundle) {
         console.info(`${CYCLE_DEBUG_PREFIX} Cycle bundle ready`, cycleBundle);
@@ -1839,7 +1842,12 @@
     }
   }
 
-  function updateModeIndicators({ cycleBundle = null, sessionBundle = null, cycleCandidateCount = 0 } = {}) {
+  function updateModeIndicators({
+    cycleBundle = null,
+    sessionBundle = null,
+    cycleCandidateCount = 0,
+    cycleRetainedCount = 0,
+  } = {}) {
     const cycleCount = cycleBundle?.sessions?.length || 0;
     const sourceCount = sessionBundle?.sources?.length || 0;
     const hasCycle = cycleCount > 1;
@@ -1849,11 +1857,31 @@
     } else if (sourceCount > 1) {
       label = `Mode IA : multi-apps (${sourceCount} source${sourceCount > 1 ? "s" : ""})`;
     }
+    const detailRetained = hasCycle ? cycleCount : cycleRetainedCount;
+    const totalCandidates = cycleCandidateCount || cycleCount;
+    let detailText = "";
+    if (totalCandidates > 0) {
+      const retainedLabel = `séance${detailRetained > 1 ? "s" : ""}`;
+      const retenueWord = detailRetained > 1 ? "retenues" : "retenue";
+      if (hasCycle) {
+        detailText = `Cycle : ${detailRetained} ${retainedLabel} ${retenueWord} sur ${totalCandidates}`;
+      } else if (totalCandidates > 1) {
+        detailText = `Cycle non activé : ${detailRetained} ${retainedLabel} ${retenueWord} sur ${totalCandidates}`;
+      }
+    }
     if (refs.modeIndicator) refs.modeIndicator.textContent = label;
-    if (refs.modalModeIndicator) refs.modalModeIndicator.textContent = label;
+    if (refs.modalModeIndicator) {
+      refs.modalModeIndicator.textContent = detailText ? `${label} — ${detailText}` : label;
+    }
     if (refs.cycleWarning) {
-      const shouldShowWarning = !hasCycle && cycleCandidateCount > 1;
-      refs.cycleWarning.classList.toggle("sp-hidden", !shouldShowWarning);
+      if (detailText) {
+        refs.cycleWarning.textContent = detailText;
+        refs.cycleWarning.classList.remove("sp-hidden");
+        if (hasCycle) refs.cycleWarning.classList.remove("ai-mode-indicator--warning");
+        else refs.cycleWarning.classList.add("ai-mode-indicator--warning");
+      } else {
+        refs.cycleWarning.classList.add("sp-hidden");
+      }
     }
   }
 
@@ -2029,22 +2057,43 @@
     }));
   }
 
+  function setCycleDiagnostics(total = 0, retained = 0) {
+    lastCycleDiagnostics = {
+      totalCandidates: Number.isFinite(total) && total > 0 ? total : 0,
+      retained: Number.isFinite(retained) && retained > 0 ? retained : 0,
+    };
+  }
+
+  function getCycleDiagnostics() {
+    return { ...lastCycleDiagnostics };
+  }
+
   function buildCycleBundle(collectedSessions = [], globalContext = {}) {
     const sessions = Array.isArray(collectedSessions) ? collectedSessions : [];
-    console.info(`${CYCLE_DEBUG_PREFIX} Cycle candidates`, { totalCandidates: sessions.length });
+    const totalCandidates = sessions.length;
+    setCycleDiagnostics(totalCandidates, 0);
+    console.info(`${CYCLE_DEBUG_PREFIX} Cycle candidates`, { totalCandidates });
     const datasetFiltered = [];
     sessions.forEach((entry) => {
-      if (!Array.isArray(entry?.dataset) || !entry.dataset.length) {
-        console.warn(`${CYCLE_DEBUG_PREFIX} Rejet séance — dataset vide`, entry.session_name);
+      const filteredRows = Array.isArray(entry?.dataset)
+        ? entry.dataset.filter((row) => row && typeof row === "object")
+        : [];
+      if (!filteredRows.length) {
+        logCycleRejection("dataset_vide", entry, {
+          datasetSize: Array.isArray(entry?.dataset) ? entry.dataset.length : 0,
+        });
         return;
       }
-      datasetFiltered.push(entry);
+      datasetFiltered.push({ ...entry, dataset: filteredRows });
     });
-    if (datasetFiltered.length !== sessions.length) {
-      console.info(`${CYCLE_DEBUG_PREFIX} Après filtrage dataset`, datasetFiltered.length);
+    console.info(`${CYCLE_DEBUG_PREFIX} Après filtre dataset`, {
+      retained: datasetFiltered.length,
+      rejected: totalCandidates - datasetFiltered.length,
+    });
+    if (datasetFiltered.length < 2) {
+      setCycleDiagnostics(totalCandidates, datasetFiltered.length);
+      return null;
     }
-    const sessionsFiltered = datasetFiltered;
-    if (sessions.length < 2) return null;
     const analyticsEngine = globalContext.analyticsEngine || window.ScanProfClassAnalytics;
     if (!analyticsEngine || typeof analyticsEngine.analyzeCycleBundle !== "function") return null;
     const baseDictionary = globalContext.baseDictionary || null;
@@ -2053,7 +2102,7 @@
     const interpretationEngine = globalContext.interpretationEngine || null;
     const sessionMeta = globalContext.sessionMeta || null;
 
-    const sorted = sessionsFiltered
+    const sorted = datasetFiltered
       .map((session) => ({ ...session }))
       .sort((a, b) => (parseDateValue(a.session_date) || 0) - (parseDateValue(b.session_date) || 0));
     const limit = globalContext.cycleSessionLimit || MAX_CYCLE_SESSIONS;
@@ -2065,7 +2114,7 @@
       sessionNames: selected.map((s) => s.session_name),
     });
     const normalized = [];
-    let expectedDictionaryId = baseDictionary?.id || null;
+    let expectedSignature = null;
     selected.forEach((rawSession, index) => {
       const prepared = prepareCycleSession(rawSession, index, {
         baseDictionary,
@@ -2073,20 +2122,33 @@
         summary,
         interpretationEngine,
         analyticsEngine,
+        onReject: (reason, extra = {}) => logCycleRejection(reason, rawSession, extra),
       });
-      if (!prepared || !prepared.dictionary_id) return;
-      if (expectedDictionaryId && prepared.dictionary_id !== expectedDictionaryId) {
-        console.warn(`${CYCLE_DEBUG_PREFIX} Rejet séance — dictionnaire différent`, {
-          session: prepared.session_name,
-          dictionaryId: prepared.dictionary_id,
-          expectedDictionaryId,
+      if (!prepared) return;
+      const candidateSignature = buildCycleSignature(rawSession, prepared, baseDictionary);
+      if (!expectedSignature) {
+        expectedSignature = candidateSignature;
+      } else if (!cycleSignaturesCompatible(expectedSignature, candidateSignature)) {
+        const mismatchReason =
+          expectedSignature.dictionaryId &&
+          candidateSignature.dictionaryId &&
+          candidateSignature.dictionaryId !== expectedSignature.dictionaryId
+            ? "referentiel_different"
+            : "activite_differente";
+        logCycleRejection(mismatchReason, rawSession, {
+          expected: expectedSignature,
+          candidate: candidateSignature,
         });
         return;
       }
-      if (!expectedDictionaryId) expectedDictionaryId = prepared.dictionary_id;
       normalized.push(prepared);
     });
-    if (!expectedDictionaryId || normalized.length < 2) return null;
+    setCycleDiagnostics(totalCandidates, normalized.length);
+    console.info(`${CYCLE_DEBUG_PREFIX} Sessions retenues`, {
+      totalCandidates,
+      retained: normalized.length,
+    });
+    if (normalized.length < 2) return null;
     normalized.forEach((session, index) => {
       session.index = index + 1;
     });
@@ -2097,7 +2159,7 @@
     });
     const firstMeta = normalized[0]?.meta || {};
     const cycleMeta = {
-      app_id: expectedDictionaryId,
+      app_id: expectedSignature?.dictionaryId || baseDictionary?.id || "",
       app_label:
         baseDictionary?.label ||
         normalized[0]?.dictionary?.label ||
@@ -2119,13 +2181,20 @@
       sessions: normalized,
       merged_cycle_analysis: merged,
     };
-    console.info(`${CYCLE_DEBUG_PREFIX} Cycle bundle final`, bundle);
+    console.info(`${CYCLE_DEBUG_PREFIX} Cycle bundle final`, {
+      totalCandidates,
+      retained: normalized.length,
+      names: normalized.map((session) => session.session_name),
+    });
     return bundle;
   }
 
   function prepareCycleSession(rawSession = {}, index = 0, options = {}) {
     const rows = Array.isArray(rawSession.dataset) ? rawSession.dataset.filter((row) => row && typeof row === "object") : [];
-    if (!rows.length) return null;
+    if (!rows.length) {
+      options.onReject?.("dataset_vide", { reason: "rows_empty" });
+      return null;
+    }
     const augmentedSource = {
       ...rawSession,
       activity_label: rawSession.activity_label || rawSession.meta?.activityName || "",
@@ -2133,7 +2202,10 @@
     };
     const dictionary =
       resolveDictionaryForSource(augmentedSource, options.baseDictionary || null) || options.baseDictionary || null;
-    if (!dictionary) return null;
+    if (!dictionary) {
+      options.onReject?.("referentiel_introuvable", { activity: augmentedSource.activity_label || null });
+      return null;
+    }
     const columns =
       (Array.isArray(rawSession.columns) && rawSession.columns.length ? rawSession.columns : inferColumnsForDataset(rows)) ||
       [];
@@ -2179,6 +2251,73 @@
       student_profile_sentences: profileSentences,
       meta: rawSession.meta || {},
     };
+  }
+
+  function buildCycleSignature(rawSession = {}, preparedSession = {}, baseDictionary = null) {
+    const dictionaryId =
+      toCleanLower(
+        preparedSession?.dictionary_id ||
+          rawSession.dictionary_id ||
+          rawSession.dictionaryId ||
+          baseDictionary?.id ||
+          preparedSession?.dictionary?.id
+      ) || "";
+    const activityId =
+      toCleanLower(
+        rawSession.meta?.activityId || rawSession.activity_id || rawSession.activityId || preparedSession?.meta?.activityId
+      ) || "";
+    const label =
+      normalizeCycleLabel(
+        rawSession.activity_label ||
+          rawSession.app_label ||
+          preparedSession?.dictionary?.label ||
+          rawSession.meta?.activityName ||
+          ""
+      ) || "";
+    return { dictionaryId, activityId, label };
+  }
+
+  function cycleSignaturesCompatible(expected = {}, candidate = {}) {
+    if (!expected || !candidate) return true;
+    if (expected.dictionaryId && candidate.dictionaryId) {
+      return expected.dictionaryId === candidate.dictionaryId;
+    }
+    if (expected.activityId && candidate.activityId) {
+      return expected.activityId === candidate.activityId;
+    }
+    if (expected.label && candidate.label) {
+      return expected.label === candidate.label;
+    }
+    return true;
+  }
+
+  function normalizeCycleLabel(label = "") {
+    return label
+      .toString()
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_]+/g, "-")
+      .replace(/[^a-z0-9-]/g, "");
+  }
+
+  function toCleanLower(value) {
+    if (value == null) return "";
+    return String(value).trim().toLowerCase();
+  }
+
+  function logCycleRejection(reason = "invalide", session = {}, extra = {}) {
+    const name =
+      session.session_name ||
+      session.sessionName ||
+      session.name ||
+      session.meta?.sessionName ||
+      session.meta?.activityName ||
+      "Séance";
+    console.warn(`${CYCLE_DEBUG_PREFIX} Rejet séance`, {
+      reason,
+      session: name,
+      ...extra,
+    });
   }
 
   function collectSessionSources() {
