@@ -1851,7 +1851,9 @@
   function checkPendingCycleTrigger() {
     const trigger = consumeCycleTriggerRequest();
     if (!trigger) return;
-    setTimeout(() => launchCycleAnalysisFromActivity(trigger), 150);
+    console.info("[ScanProf IA] cycle trigger détecté", trigger);
+    toggleDrawer(true);
+    setTimeout(() => launchCycleAnalysisFromActivity(trigger), 250);
   }
 
   function updateModeIndicators({
@@ -2110,6 +2112,9 @@
       setStatus(statusTarget, "Clé API manquante pour lancer l’analyse du cycle.", "error");
       return;
     }
+    openModal();
+    setModalLoading(true);
+    setPanelBusy(true);
     const cycleSessions = collectCycleSessions({
       classId: trigger.classId,
       activityId: trigger.activityId,
@@ -2121,7 +2126,11 @@
       },
     });
     if (cycleSessions.length < 2) {
-      setStatus(statusTarget, "Cycle indisponible : moins de deux séances exploitables.", "error");
+      const msg = `Cycle impossible : ${cycleSessions.length} séance${cycleSessions.length > 1 ? "s" : ""} disponible${cycleSessions.length > 1 ? "s" : ""}.`;
+      setStatus(statusTarget, msg, "error");
+      renderFallbackError(msg);
+      setModalLoading(false);
+      setPanelBusy(false);
       return;
     }
     const notes = refs.notesField?.value || "";
@@ -2186,7 +2195,14 @@
       cycleRetainedCount: diagnostics.retained || (cycleBundle?.sessions?.length || 0),
     });
     if (!cycleBundle) {
-      setStatus(statusTarget, "Analyse du cycle impossible : données insuffisantes.", "error");
+      const retained = diagnostics.retained || 0;
+      const total = diagnostics.totalCandidates || cycleSessions.length;
+      const retainedLabel = `séance${retained > 1 ? "s" : ""}`;
+      const msg = `Cycle impossible : ${retained} ${retainedLabel} retenue${retained > 1 ? "s" : ""} sur ${total}.`;
+      setStatus(statusTarget, msg, "error");
+      renderFallbackError(msg);
+      setModalLoading(false);
+      setPanelBusy(false);
       return;
     }
     const representativeSession =
@@ -2201,9 +2217,6 @@
       manualText: manualInterpretation,
       dictionary: dictionaryToUse,
     });
-    openModal();
-    setModalLoading(true);
-    setPanelBusy(true);
     const analysisInput = {
       contexte: buildContext(
         summary,
