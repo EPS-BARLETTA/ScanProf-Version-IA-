@@ -15,6 +15,14 @@
     if (els.backupBtn) {
       els.backupBtn.addEventListener("click", handleBackupDownload);
     }
+    els.importBtn = document.getElementById("classes-import-btn");
+    if (els.importBtn) {
+      els.importBtn.addEventListener("click", handleImportClick);
+    }
+    els.importInput = document.getElementById("classes-import-input");
+    if (els.importInput) {
+      els.importInput.addEventListener("change", handleImportFileChange);
+    }
     load();
     render();
   });
@@ -115,6 +123,56 @@
   function buildBackupFilename() {
     const dateStamp = new Date().toISOString().slice(0, 10);
     return `scanprof-classes-backup-${dateStamp}.json`;
+  }
+
+  function handleImportClick() {
+    if (!els.importInput) return;
+    els.importInput.value = "";
+    els.importInput.click();
+  }
+
+  function handleImportFileChange(event) {
+    const input = event?.target;
+    const file = input?.files && input.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = reader.result;
+        const payload = JSON.parse(text);
+        const summary = store.importClassesBackup(payload);
+        classes = store.loadClasses();
+        render();
+        alert(buildImportSummaryMessage(summary));
+      } catch (error) {
+        console.error("Import de sauvegarde impossible :", error);
+        alert("Fichier invalide ou sauvegarde ScanProf non reconnue.");
+      } finally {
+        if (input) input.value = "";
+      }
+    };
+    reader.onerror = () => {
+      console.error("Lecture du fichier de sauvegarde impossible.");
+      alert("Lecture du fichier impossible.");
+      if (input) input.value = "";
+    };
+    reader.readAsText(file);
+  }
+
+  function buildImportSummaryMessage(summary) {
+    if (!summary) return "Sauvegarde importée.";
+    const added = summary.added || 0;
+    const replaced = summary.replaced || 0;
+    const skipped = summary.skipped || 0;
+    const parts = [
+      `${added} classe(s) ajoutée(s)`,
+      `${replaced} remplacée(s)`,
+    ];
+    if (skipped > 0) {
+      parts.push(`${skipped} ignorée(s)`);
+    }
+    return `Sauvegarde importée : ${parts.join(", ")}.`;
   }
 
   function openColorDialog(cls) {
