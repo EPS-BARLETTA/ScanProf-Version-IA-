@@ -11,6 +11,10 @@
     els.colorInput = document.getElementById("new-class-color");
     els.createBtn = document.getElementById("create-class-btn");
     els.createBtn.addEventListener("click", handleCreate);
+    els.backupBtn = document.getElementById("classes-backup-btn");
+    if (els.backupBtn) {
+      els.backupBtn.addEventListener("click", handleBackupDownload);
+    }
     load();
     render();
   });
@@ -86,6 +90,31 @@
       save();
       render();
     }
+  }
+
+  function handleBackupDownload() {
+    try {
+      const payload = store.exportClassesBackup();
+      const fileName = buildBackupFilename();
+      const json = JSON.stringify(payload, null, 2);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      console.error("Export des classes impossible :", error);
+      alert("Export impossible. Merci de réessayer.");
+    }
+  }
+
+  function buildBackupFilename() {
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    return `scanprof-classes-backup-${dateStamp}.json`;
   }
 
   function openColorDialog(cls) {

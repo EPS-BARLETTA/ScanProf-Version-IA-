@@ -26,6 +26,9 @@
     .add-class-form{margin-top:18px;padding:18px;border-radius:14px;background:var(--sp-table-odd);display:flex;flex-direction:column;gap:10px;}
     .add-class-form input{padding:8px 10px;border-radius:8px;border:1px solid var(--sp-border);background:var(--sp-surface);color:var(--sp-text);}
     .add-class-actions{display:flex;gap:10px;justify-content:flex-end;}
+    .classes-backup{margin:18px auto 28px;text-align:center;}
+    #classes-backup-btn{padding:12px 18px;border-radius:10px;border:1px solid var(--sp-primary,#1e90ff);background:var(--sp-primary,#1e90ff);color:#fff;font-weight:600;cursor:pointer;box-shadow:0 10px 20px rgba(0,0,0,.12);}
+    #classes-backup-btn:hover{filter:brightness(.95);}
   </style>
   <script src="theme.js" defer></script>
   <script src="classes-store.js" defer></script>
@@ -44,6 +47,10 @@
       <div class="classes-head">
         <h1>📚 Vos classes</h1>
         <p>Créez une classe, choisissez une couleur puis entrez dans chaque activité pour retrouver vos séances archivées.</p>
+      </div>
+
+      <div class="classes-backup">
+        <button type="button" id="classes-backup-btn">💾 Sauvegarder vos classes</button>
       </div>
 
       <div id="classes-list" class="classes-grid"></div>

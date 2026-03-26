@@ -48,6 +48,29 @@
     };
   }
 
+  function exportClassesBackup(classIds = null) {
+    const allClasses = loadClasses();
+    const hasSelection = Array.isArray(classIds) && classIds.length > 0;
+    let filtered = allClasses;
+
+    if (Array.isArray(classIds)) {
+      if (classIds.length === 0) {
+        filtered = [];
+      } else {
+        const allow = new Set(classIds);
+        filtered = allClasses.filter((cls) => allow.has(cls?.id));
+      }
+    }
+
+    return {
+      format: "scanprof.classes.export",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      scope: hasSelection ? "selection" : "all",
+      classes: JSON.parse(JSON.stringify(filtered || [])),
+    };
+  }
+
   window.ScanProfClassesStore = {
     loadClasses,
     saveClasses,
@@ -56,5 +79,6 @@
     createActivity,
     createSession,
     STORE_KEY,
+    exportClassesBackup,
   };
 })();
