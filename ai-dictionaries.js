@@ -409,6 +409,18 @@
     return all[slugify(id)] ? attachSource(all[slugify(id)]) : null;
   }
 
+  function matchActivityDictionary(activityName, options = {}) {
+    return getDictionaryForActivity(activityName, options);
+  }
+
+  function getDictionary(idOrActivityName, options = {}) {
+    if (!idOrActivityName) return null;
+    const byId = getDictionaryById(idOrActivityName);
+    if (byId) return byId;
+    if (options?.strictId) return null;
+    return matchActivityDictionary(idOrActivityName, options);
+  }
+
   function upsertDictionary(dict) {
     if (!dict) return null;
     const payload = loadUserDictionaries();
@@ -469,8 +481,11 @@
     STORAGE_KEYS,
     DEFAULT_DICTIONARIES: normalizeAll(getDefaultDictionaries()),
     list: listDictionaries,
+    get: getDictionary,
     getDictionaryForActivity,
+    matchActivity: matchActivityDictionary,
     getDictionaryById,
+    getDefaultDictionaries: () => deepClone(DEFAULT_DICTIONARIES),
     upsertDictionary,
     removeDictionary,
     export: exportDictionaries,

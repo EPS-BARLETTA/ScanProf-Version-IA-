@@ -87,6 +87,9 @@
   const DICTIONARY_STATE_EVENT = "scanprof:dictionary-state-changed";
   const OPEN_DICTIONARY_EVENT = "scanprof:open-dictionary";
   const MAX_TOTAL_COLUMNS = 18;
+  const SESSION_META_KEY = "scanprof_current_session_meta";
+  const MAX_CYCLE_SESSIONS = 5;
+  const SESSION_BUNDLE_MIN_SOURCES = 2;
 
   let refs = {};
   let lastReportText = "";
@@ -832,6 +835,7 @@
     try {
       const notes = refs.notesField?.value || "";
       const storedContext = getStoredAIContext();
+      const sessionMeta = getStoredSessionMeta();
       const summary = summarizeDataset();
       const manualInterpretation = refs.interpretationField?.value || localStorage.getItem(STORAGE.INTERPRETATION) || "";
       const autoDictionary = getActivityDictionary(currentContext.activityName || storedContext.activite || "");
@@ -864,6 +868,7 @@
         providerLabel,
         intent,
         storedContext,
+        sessionMeta,
         totalEntries: dataset.length,
         usedEntries: sliced.length,
         studentCount: dataset.length,
@@ -933,6 +938,27 @@
       lastQuestionText = intent === "question" ? (questionText || "").trim() : "";
       const studentProfiles = classAnalytics?.student_profiles || null;
       const studentProfileSentences = classAnalytics?.student_profile_sentences || null;
+      const sessionBundle = buildSessionBundle(collectSessionSources(), {
+        sessionMeta: {
+          class_name: currentContext.className || "",
+          session_name: currentContext.sessionName || "",
+          activity_label: currentContext.activityName || "",
+          date: currentContext.sessionDate || storedContext?.date || new Date().toISOString(),
+        },
+        summary,
+        manualText: manualInterpretation,
+        baseDictionary: dictionaryToUse,
+        interpretationEngine,
+        analyticsEngine,
+      });
+      const cycleBundle = buildCycleBundle(collectCycleSessions(), {
+        sessionMeta,
+        baseDictionary: dictionaryToUse,
+        manualText: manualInterpretation,
+        summary,
+        interpretationEngine,
+        analyticsEngine,
+      });
       const analysisInput = {
         contexte: buildContext(
           summary,
@@ -958,6 +984,8 @@
         student_profiles: studentProfiles,
         student_profile_sentences: studentProfileSentences,
         class_analytics: classAnalytics,
+        session_bundle: sessionBundle,
+        cycle_bundle: cycleBundle,
       };
       const builder = window.ScanProfAIPrompt;
       if (!builder || typeof builder.buildPrompt !== "function") {
@@ -1822,6 +1850,17 @@
     }
   }
 
+  function getStoredSessionMeta() {
+    try {
+      const raw = localStorage.getItem(SESSION_META_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
   function getSelectedProviderKey() {
     return currentProvider;
   }
@@ -1911,6 +1950,332 @@
       }
     });
     return plan;
+  }
+
+  function collectCycleSessions() {
+    const store = window.ScanProfClassesStore;
+    if (!store || typeof store.loadClasses !== "function") return [];
+    const sessionMeta = getStoredSessionMeta();
+    if (!sessionMeta?.classId || !sessionMeta?.activityId) return [];
+    let classes = [];
+    try {
+      classes = store.loadClasses() || [];
+    } catch (err) {
+      console.warn("[ScanProf IA] Impossible de charger les classes pour le cycle.", err);
+      return [];
+    }
+    const cls = classes.find((item) => item.id === sessionMeta.classId);
+    const activity = cls?.activities?.find((act) => act.id === sessionMeta.activityId);
+    if (!cls || !activity || !Array.isArray(activity.sessions) || !activity.sessions.length) return [];
+    return activity.sessions.map((session) => ({
+      session_id: session.id,
+      session_name: session.name,
+      session_date: session.updatedAt || session.createdAt || null,
+      dataset: Array.isArray(session.data) ? session.data : [],
+      activity_label: activity.name,
+      app_label: activity.name,
+      meta: {
+        classId: cls.id,
+        className: cls.name,
+        activityId: activity.id,
+        activityName: activity.name,
+      },
+    }));
+  }
+
+  function buildCycleBundle(collectedSessions = [], globalContext = {}) {
+    const sessions = (Array.isArray(collectedSessions) ? collectedSessions : []).filter(
+      (entry) => Array.isArray(entry?.dataset) && entry.dataset.length
+    );
+    if (sessions.length < 2) return null;
+    const analyticsEngine = globalContext.analyticsEngine || window.ScanProfClassAnalytics;
+    if (!analyticsEngine || typeof analyticsEngine.analyzeCycleBundle !== "function") return null;
+    const baseDictionary = globalContext.baseDictionary || null;
+    const manualText = globalContext.manualText || "";
+    const summary = globalContext.summary || {};
+    const interpretationEngine = globalContext.interpretationEngine || null;
+    const sessionMeta = globalContext.sessionMeta || null;
+
+    const sorted = sessions
+      .map((session) => ({ ...session }))
+      .sort((a, b) => (parseDateValue(a.session_date) || 0) - (parseDateValue(b.session_date) || 0));
+    const limit = globalContext.cycleSessionLimit || MAX_CYCLE_SESSIONS;
+    const selected = sorted.slice(Math.max(sorted.length - limit, 0));
+
+    const normalized = [];
+    let expectedDictionaryId = baseDictionary?.id || null;
+    selected.forEach((rawSession, index) => {
+      const prepared = prepareCycleSession(rawSession, index, {
+        baseDictionary,
+        manualText,
+        summary,
+        interpretationEngine,
+        analyticsEngine,
+      });
+      if (!prepared || !prepared.dictionary_id) return;
+      if (expectedDictionaryId && prepared.dictionary_id !== expectedDictionaryId) {
+        return;
+      }
+      if (!expectedDictionaryId) expectedDictionaryId = prepared.dictionary_id;
+      normalized.push(prepared);
+    });
+    if (!expectedDictionaryId || normalized.length < 2) return null;
+    normalized.forEach((session, index) => {
+      session.index = index + 1;
+    });
+    const merged = analyticsEngine.analyzeCycleBundle({
+      sessions: normalized,
+      summary,
+      manualText,
+    });
+    const firstMeta = normalized[0]?.meta || {};
+    const cycleMeta = {
+      app_id: expectedDictionaryId,
+      app_label:
+        baseDictionary?.label ||
+        normalized[0]?.dictionary?.label ||
+        firstMeta.activityName ||
+        sessionMeta?.activityName ||
+        "Activité",
+      class_name: sessionMeta?.className || firstMeta.className || "",
+      activity_name: sessionMeta?.activityName || firstMeta.activityName || "",
+      cycle_name:
+        sessionMeta?.cycleName ||
+        sessionMeta?.activityName ||
+        firstMeta.activityName ||
+        baseDictionary?.label ||
+        "Cycle",
+      session_count: normalized.length,
+    };
+    return {
+      cycle_meta: cycleMeta,
+      sessions: normalized,
+      merged_cycle_analysis: merged,
+    };
+  }
+
+  function prepareCycleSession(rawSession = {}, index = 0, options = {}) {
+    const rows = Array.isArray(rawSession.dataset) ? rawSession.dataset.filter((row) => row && typeof row === "object") : [];
+    if (!rows.length) return null;
+    const augmentedSource = {
+      ...rawSession,
+      activity_label: rawSession.activity_label || rawSession.meta?.activityName || "",
+      app_label: rawSession.app_label || rawSession.meta?.activityName || "",
+    };
+    const dictionary =
+      resolveDictionaryForSource(augmentedSource, options.baseDictionary || null) || options.baseDictionary || null;
+    if (!dictionary) return null;
+    const columns =
+      (Array.isArray(rawSession.columns) && rawSession.columns.length ? rawSession.columns : inferColumnsForDataset(rows)) ||
+      [];
+    const retentionPlan = buildColumnRetentionPlan(columns, dictionary, options.manualText || "");
+    const cleanedEntries = rows.slice(0, MAX_ELEVES).map((entry) => cleanEntry(entry, retentionPlan));
+    const summary = rawSession.summary || summarizeSubsetEntries(cleanedEntries, rawSession.meta || {});
+    const interpretationEngine = options.interpretationEngine;
+    const preAnalysis =
+      rawSession.pre_analysis ||
+      (interpretationEngine &&
+        interpretationEngine.analyze({
+          dataset: cleanedEntries,
+          columns,
+          dictionary,
+          manualText: options.manualText || "",
+          summary,
+        }));
+    const analyticsEngine = options.analyticsEngine;
+    const classAnalytics =
+      rawSession.class_analytics ||
+      (analyticsEngine &&
+        analyticsEngine.analyze({
+          dataset: cleanedEntries,
+          dictionary,
+          summary,
+          manualText: options.manualText || "",
+        }));
+    const profileCollection = rawSession.student_profiles || classAnalytics?.student_profiles || null;
+    const profileSentences =
+      rawSession.student_profile_sentences || classAnalytics?.student_profile_sentences || null;
+    return {
+      session_id: rawSession.session_id || rawSession.sessionId || rawSession.id || `session_${index + 1}`,
+      session_name: rawSession.session_name || rawSession.sessionName || rawSession.name || `Séance ${index + 1}`,
+      session_date: rawSession.session_date || rawSession.updatedAt || rawSession.createdAt || null,
+      index: index + 1,
+      dataset: cleanedEntries,
+      dictionary,
+      dictionary_id: dictionary?.id || null,
+      pre_analysis: preAnalysis || null,
+      class_analytics: classAnalytics || null,
+      summary_sentences: rawSession.summary_sentences || classAnalytics?.summary_sentences || null,
+      student_profiles: profileCollection,
+      student_profile_sentences: profileSentences,
+      meta: rawSession.meta || {},
+    };
+  }
+
+  function collectSessionSources() {
+    const api = window.ScanProfParticipants;
+    if (!api || typeof api.getCurrentSources !== "function") return [];
+    try {
+      const sources = api.getCurrentSources();
+      return Array.isArray(sources) ? sources.filter(Boolean) : [];
+    } catch (err) {
+      console.warn("[ScanProf IA] Impossible de récupérer les sources multi-applications.", err);
+      return [];
+    }
+  }
+
+  function buildSessionBundle(collectedSources = [], globalContext = {}) {
+    const sources = Array.isArray(collectedSources) ? collectedSources.filter(Boolean) : [];
+    if (sources.length < SESSION_BUNDLE_MIN_SOURCES) return null;
+    const analyticsEngine = globalContext.analyticsEngine || window.ScanProfClassAnalytics;
+    if (!analyticsEngine || typeof analyticsEngine.analyzeSessionBundle !== "function") return null;
+    const normalizedSources = [];
+    sources.forEach((rawSource, index) => {
+      const prepared = prepareBundleSource(rawSource, index, {
+        manualText: globalContext.manualText || "",
+        baseDictionary: globalContext.baseDictionary || null,
+        summary: globalContext.summary || {},
+        interpretationEngine: globalContext.interpretationEngine || null,
+        analyticsEngine,
+      });
+      if (prepared) normalizedSources.push(prepared);
+    });
+    if (normalizedSources.length < SESSION_BUNDLE_MIN_SOURCES) return null;
+    const mergedSessionAnalysis = analyticsEngine.analyzeSessionBundle({
+      sources: normalizedSources,
+      summary: globalContext.summary || {},
+      manualText: globalContext.manualText || "",
+    });
+    return {
+      session_meta: {
+        class_name: globalContext.sessionMeta?.class_name || globalContext.sessionMeta?.className || "",
+        session_name: globalContext.sessionMeta?.session_name || globalContext.sessionMeta?.sessionName || "",
+        activity_label: globalContext.sessionMeta?.activity_label || globalContext.sessionMeta?.activityLabel || "",
+        date: globalContext.sessionMeta?.date || new Date().toISOString(),
+      },
+      sources: normalizedSources,
+      merged_session_analysis: mergedSessionAnalysis,
+    };
+  }
+
+  function prepareBundleSource(rawSource = {}, index = 0, options = {}) {
+    const rows = Array.isArray(rawSource.dataset) ? rawSource.dataset.filter((row) => row && typeof row === "object") : [];
+    if (!rows.length) return null;
+    const dictionary = resolveDictionaryForSource(rawSource, options.baseDictionary);
+    const columns = Array.isArray(rawSource.columns) && rawSource.columns.length
+      ? rawSource.columns
+      : inferColumnsForDataset(rows);
+    const manualText = rawSource.manualText || options.manualText || "";
+    const retentionPlan = buildColumnRetentionPlan(columns, dictionary, manualText);
+    const cleanedEntries = rows.slice(0, MAX_ELEVES).map((entry) => cleanEntry(entry, retentionPlan));
+    const summary = rawSource.summary && typeof rawSource.summary === "object"
+      ? rawSource.summary
+      : summarizeSubsetEntries(cleanedEntries, rawSource.meta || {});
+    const interpretationEngine = options.interpretationEngine;
+    const preAnalysis =
+      interpretationEngine && typeof interpretationEngine.analyze === "function"
+        ? interpretationEngine.analyze({
+            dataset: cleanedEntries,
+            columns,
+            dictionary,
+            manualText,
+            summary,
+          })
+        : null;
+    const analyticsEngine = options.analyticsEngine;
+    const classAnalytics =
+      analyticsEngine && typeof analyticsEngine.analyze === "function"
+        ? analyticsEngine.analyze({
+            dataset: cleanedEntries,
+            dictionary,
+            summary,
+            manualText,
+          })
+        : null;
+    return {
+      app_id: rawSource.app_id || rawSource.appId || dictionary?.id || `source_${index + 1}`,
+      app_label:
+        rawSource.app_label ||
+        rawSource.appLabel ||
+        rawSource.activity_label ||
+        rawSource.activityLabel ||
+        dictionary?.label ||
+        `Source ${index + 1}`,
+      dataset: cleanedEntries,
+      dictionary,
+      dictionary_id: dictionary?.id || rawSource.dictionary_id || rawSource.dictionaryId || null,
+      pre_analysis: rawSource.pre_analysis || preAnalysis,
+      class_analytics: rawSource.class_analytics || classAnalytics,
+      summary_sentences:
+        rawSource.summary_sentences || classAnalytics?.summary_sentences || preAnalysis?.summary_sentences || null,
+      student_profiles: rawSource.student_profiles || classAnalytics?.student_profiles || null,
+      student_profile_sentences:
+        rawSource.student_profile_sentences || classAnalytics?.student_profile_sentences || null,
+    };
+  }
+
+  function resolveDictionaryForSource(rawSource = {}, fallback = null) {
+    if (rawSource.dictionary) return rawSource.dictionary;
+    const registry = window.ScanProfAIDictionaries;
+    const idsToTry = [
+      rawSource.dictionary_id,
+      rawSource.dictionaryId,
+      rawSource.app_id,
+      rawSource.appId,
+      rawSource.activity_id,
+    ].filter(Boolean);
+    if (registry && typeof registry.get === "function") {
+      for (const id of idsToTry) {
+        const dict = registry.get(id);
+        if (dict) return dict;
+      }
+    }
+    const label = rawSource.app_label || rawSource.appLabel || rawSource.activity_label || rawSource.activityLabel || "";
+    if (label && registry && typeof registry.matchActivity === "function") {
+      const match = registry.matchActivity(label);
+      if (match) return match;
+    }
+    return fallback || null;
+  }
+
+  function summarizeSubsetEntries(entries = [], meta = {}) {
+    const columns = inferColumnsForDataset(entries, meta.columns);
+    return {
+      total: meta.total || entries.length,
+      columns,
+      classes: meta.classes || countClassesInEntries(entries),
+      meta: meta.meta || {},
+    };
+  }
+
+  function inferColumnsForDataset(entries = [], fallback = []) {
+    const set = new Set(Array.isArray(fallback) ? fallback.filter(Boolean) : []);
+    entries.slice(0, 20).forEach((entry) => {
+      Object.keys(entry || {}).forEach((key) => {
+        if (!key || key.startsWith("__")) return;
+        set.add(key);
+      });
+    });
+    return Array.from(set);
+  }
+
+  function countClassesInEntries(entries = []) {
+    const counts = {};
+    entries.forEach((entry) => {
+      if (!entry || typeof entry !== "object") return;
+      const cls = String(entry.classe || entry.class || "Non renseigné").trim() || "Non renseigné";
+      counts[cls] = (counts[cls] || 0) + 1;
+    });
+    return Object.entries(counts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  }
+
+  function parseDateValue(value) {
+    if (!value) return null;
+    const timestamp = Date.parse(value);
+    if (Number.isNaN(timestamp)) return null;
+    return timestamp;
   }
 
   function normalizeColumnKey(key) {

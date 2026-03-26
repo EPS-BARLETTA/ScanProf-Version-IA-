@@ -40,6 +40,7 @@
   ];
   const SUMMARY_KEYS = ["overview", "strengths", "needs_work", "next_steps"];
   const STUDENT_PROFILE_KEYS = ["to_support", "strengths", "to_confirm"];
+  const BUNDLE_PROFILE_KEYS = ["to_support", "strengths", "to_confirm", "contrasted"];
   const CROSS_TRAINING_EXERCISES = {
     bu: "Burpees",
     cr: "Crunch",
@@ -71,6 +72,42 @@
     to_support: "À accompagner",
     strengths: "Point d'appui",
     to_confirm: "À confirmer",
+  };
+  const BUNDLE_PROFILE_LABELS = {
+    ...STUDENT_PROFILE_LABELS,
+    contrasted: "Profil contrasté",
+  };
+  const BUNDLE_PROFILE_LIMITS = {
+    to_support: 2,
+    strengths: 2,
+    to_confirm: 1,
+    contrasted: 2,
+  };
+  const CYCLE_PROFILE_KEYS = ["progressing", "stalled", "to_support", "strengths", "to_confirm"];
+  const CYCLE_PROFILE_LABELS = {
+    progressing: "Progression",
+    stalled: "Stagnation",
+    to_support: "À accompagner",
+    strengths: "Point d'appui",
+    to_confirm: "À confirmer",
+  };
+  const CYCLE_PROFILE_LIMITS = {
+    progressing: 2,
+    stalled: 2,
+    to_support: 2,
+    strengths: 2,
+    to_confirm: 2,
+  };
+  const HETEROGENEITY_RANK = {
+    faible: 0,
+    "faible": 0,
+    moderee: 1,
+    "moderee": 1,
+    "modérée": 1,
+    modérée: 1,
+    marquee: 2,
+    "marquee": 2,
+    "marquée": 2,
   };
 
   function createSummarySentences() {
@@ -128,6 +165,56 @@
 
     finalizeAnalytics(base);
     return base;
+  }
+
+  function analyzeSessionBundle({ sources = [], summary = {}, manualText = "" } = {}) {
+    const normalizedSources = [];
+    let combinedSummary = createSummarySentences();
+    (Array.isArray(sources) ? sources : []).forEach((source, index) => {
+      const normalized = normalizeBundleSource(source, summary, manualText, index);
+      if (!normalized) return;
+      normalizedSources.push(normalized);
+      combinedSummary = mergeSummarySentences(combinedSummary, normalized.summary_sentences || createSummarySentences());
+    });
+    if (!normalizedSources.length) {
+      return createMergedSessionAnalysis();
+    }
+    const trimmedSummary = trimMergedSummary(dedupeSummarySentences(combinedSummary));
+    const bundleProfiles = buildBundleProfiles(normalizedSources);
+    return {
+      overview: trimmedSummary.overview,
+      strengths: trimmedSummary.strengths,
+      needs_work: trimmedSummary.needs_work,
+      next_steps: trimmedSummary.next_steps,
+      student_profiles: bundleProfiles.profiles,
+      student_profile_sentences: bundleProfiles.sentences,
+    };
+  }
+
+  function analyzeCycleBundle({ sessions = [], summary = {}, manualText = "" } = {}) {
+    const normalizedSessions = (Array.isArray(sessions) ? sessions : [])
+      .map((session, index) => normalizeCycleSession(session, summary, manualText, index))
+      .filter(Boolean);
+    if (normalizedSessions.length < 2) {
+      return createMergedCycleAnalysis();
+    }
+    normalizedSessions.sort((a, b) => (parseDateValue(a.session_date) || 0) - (parseDateValue(b.session_date) || 0));
+    normalizedSessions.forEach((session, index) => {
+      session.session_index = index + 1;
+    });
+    const overview = buildCycleOverviewSentences(normalizedSessions);
+    const trendInsights = analyzeCycleTrends(normalizedSessions);
+    const cycleProfiles = buildCycleProfiles(normalizedSessions);
+    const nextSteps = buildCycleNextSteps(normalizedSessions, trendInsights.trendNextSteps);
+    return {
+      overview,
+      progressions: trendInsights.progressions,
+      stagnations: trendInsights.stagnations,
+      regressions: trendInsights.regressions,
+      next_steps: nextSteps,
+      student_profiles: cycleProfiles.profiles,
+      student_profile_sentences: cycleProfiles.sentences,
+    };
   }
 
   function indexStudents(entries) {
@@ -1306,6 +1393,24 @@
     };
   }
 
+  function createBundleProfileCollection() {
+    return {
+      to_support: [],
+      strengths: [],
+      to_confirm: [],
+      contrasted: [],
+    };
+  }
+
+  function createBundleProfileSentences() {
+    return {
+      to_support: [],
+      strengths: [],
+      to_confirm: [],
+      contrasted: [],
+    };
+  }
+
   function createStudentProfileSentences() {
     return {
       to_support: [],
@@ -1373,6 +1478,572 @@
       });
     });
     return sentences;
+  }
+
+  function createCycleProfileCollection() {
+    return {
+      progressing: [],
+      stalled: [],
+      to_support: [],
+      strengths: [],
+      to_confirm: [],
+    };
+  }
+
+  function createCycleProfileSentences() {
+    return {
+      progressing: [],
+      stalled: [],
+      to_support: [],
+      strengths: [],
+      to_confirm: [],
+    };
+  }
+
+  function buildCycleProfileSentences(profiles = createCycleProfileCollection()) {
+    const sentences = createCycleProfileSentences();
+    CYCLE_PROFILE_KEYS.forEach((key) => {
+      const label = CYCLE_PROFILE_LABELS[key] || key;
+      sentences[key] = (profiles[key] || [])
+        .map((profile) => {
+          if (!profile || !profile.student) return null;
+          const detail = profile.signal ? ` — ${profile.signal}` : "";
+          return `${label} : ${profile.student}${detail}`;
+        })
+        .filter(Boolean);
+    });
+    return sentences;
+  }
+
+  function buildBundleProfileSentences(profiles = createBundleProfileCollection()) {
+    const sentences = createBundleProfileSentences();
+    BUNDLE_PROFILE_KEYS.forEach((key) => {
+      const label = BUNDLE_PROFILE_LABELS[key] || key;
+      sentences[key] = (profiles[key] || []).map((profile) => {
+        if (!profile?.student) return null;
+        const detail = profile.signal ? ` — ${profile.signal}` : "";
+        return `${label} : ${profile.student}${detail}`;
+      }).filter(Boolean);
+    });
+    return sentences;
+  }
+
+  function createMergedSessionAnalysis() {
+    return {
+      overview: [],
+      strengths: [],
+      needs_work: [],
+      next_steps: [],
+      student_profiles: createBundleProfileCollection(),
+      student_profile_sentences: createBundleProfileSentences(),
+    };
+  }
+
+  function trimMergedSummary(summary = createSummarySentences()) {
+    const trimmed = createSummarySentences();
+    SUMMARY_KEYS.forEach((key) => {
+      trimmed[key] = limitArray(Array.from(new Set(summary[key] || [])));
+    });
+    return trimmed;
+  }
+
+  function limitArray(list = [], max = 4) {
+    if (!Array.isArray(list)) return [];
+    return list.filter(Boolean).slice(0, max);
+  }
+
+  function normalizeBundleSource(source, fallbackSummary = {}, manualText = "", index = 0) {
+    if (!source || typeof source !== "object") return null;
+    const normalized = { ...source };
+    let analytics = normalized.class_analytics;
+    if (!analytics && Array.isArray(normalized.dataset) && normalized.dataset.length) {
+      analytics = analyze({
+        dataset: normalized.dataset,
+        dictionary: normalized.dictionary || null,
+        summary: normalized.summary || fallbackSummary,
+        manualText: normalized.manualText || manualText,
+      });
+    }
+    normalized.class_analytics = analytics || null;
+    normalized.summary_sentences =
+      normalized.summary_sentences || analytics?.summary_sentences || createSummarySentences();
+    normalized.student_profiles =
+      normalized.student_profiles || analytics?.student_profiles || createStudentProfileCollection();
+    normalized.student_profile_sentences =
+      normalized.student_profile_sentences ||
+      analytics?.student_profile_sentences ||
+      buildStudentProfileSentences(normalized.student_profiles);
+    normalized.app_id = normalized.app_id || normalized.appId || normalized.dictionary?.id || `source_${index + 1}`;
+    normalized.app_label =
+      normalized.app_label ||
+      normalized.appLabel ||
+      normalized.activity_label ||
+      normalized.dictionary?.label ||
+      normalized.app_id;
+    return normalized;
+  }
+
+  function buildBundleProfiles(sources = []) {
+    const ledger = new Map();
+    sources.forEach((source) => {
+      const profiles = source.student_profiles || createStudentProfileCollection();
+      STUDENT_PROFILE_KEYS.forEach((category) => {
+        (profiles[category] || []).forEach((profile) => {
+          registerBundleProfileSignal(ledger, profile, category, source);
+        });
+      });
+    });
+    const merged = createBundleProfileCollection();
+    ledger.forEach((entry) => {
+      const category = resolveBundleCategory(entry);
+      if (!category) return;
+      const formatted = formatBundleProfile(entry, category);
+      merged[category].push(formatted);
+    });
+    BUNDLE_PROFILE_KEYS.forEach((key) => {
+      merged[key] = limitArray(dedupeProfiles(merged[key] || []), BUNDLE_PROFILE_LIMITS[key] || 3);
+    });
+    return {
+      profiles: merged,
+      sentences: buildBundleProfileSentences(merged),
+    };
+  }
+
+  function registerBundleProfileSignal(ledger, profile = {}, category, source = {}) {
+    if (!profile || !profile.student || !category) return;
+    const student = String(profile.student).trim();
+    if (!student) return;
+    const key = student.toLowerCase();
+    if (!ledger.has(key)) {
+      ledger.set(key, {
+        student,
+        counts: { to_support: 0, strengths: 0, to_confirm: 0 },
+        signals: [],
+        evidence: new Set(),
+        confidences: [],
+      });
+    }
+    const entry = ledger.get(key);
+    if (entry.counts[category] != null) {
+      entry.counts[category] += 1;
+    }
+    entry.signals.push({
+      category,
+      text: profile.signal || "",
+      sourceId: source.app_id || source.appId || null,
+      sourceLabel: source.app_label || source.appLabel || "",
+    });
+    (profile.evidence_fields || []).forEach((field) => {
+      if (field) entry.evidence.add(field);
+    });
+    if (profile.confidence) entry.confidences.push(profile.confidence);
+  }
+
+  function resolveBundleCategory(entry) {
+    if (!entry) return null;
+    if (entry.counts.to_support > 0 && entry.counts.strengths > 0) return "contrasted";
+    if (entry.counts.to_support > 0) return "to_support";
+    if (entry.counts.strengths > 0) return "strengths";
+    if (entry.counts.to_confirm > 0) return "to_confirm";
+    return null;
+  }
+
+  function formatBundleProfile(entry, category) {
+    const relevantCategories =
+      category === "contrasted" ? new Set(["to_support", "strengths"]) : new Set([category]);
+    const relevantSignals = entry.signals.filter((signal) => relevantCategories.has(signal.category));
+    const textParts = relevantSignals.map((signal) => {
+      const prefix = signal.sourceLabel ? `${signal.sourceLabel} : ` : "";
+      if (signal.text) return `${prefix}${signal.text}`;
+      if (signal.category === "to_support") return `${prefix}difficultés répétées`;
+      if (signal.category === "strengths") return `${prefix}réussites confirmées`;
+      return `${prefix}signal observé`;
+    });
+    const combinedSignal = textParts.slice(0, 2).join(" / ");
+    return {
+      student: entry.student,
+      signal: combinedSignal,
+      evidence_fields: Array.from(entry.evidence).slice(0, 5),
+      confidence: computeBundleConfidence(entry, category),
+    };
+  }
+
+  function computeBundleConfidence(entry, category) {
+    const counts = entry.counts || {};
+    let baseline = "moderate";
+    if (category === "to_support" || category === "strengths") {
+      baseline = counts[category] >= 2 ? "high" : "moderate";
+    } else if (category === "contrasted") {
+      baseline = "moderate";
+    } else if (category === "to_confirm") {
+      baseline = counts.to_confirm > 1 ? "moderate" : "low";
+    }
+    const highestSource = pickHighestConfidence(entry.confidences || []);
+    return pickHighestConfidence([baseline, highestSource]);
+  }
+
+  function pickHighestConfidence(levels = []) {
+    const order = { low: 0, moderate: 1, high: 2 };
+    let best = "moderate";
+    (Array.isArray(levels) ? levels : [levels]).forEach((level) => {
+      const normalized = normalizeConfidenceLevel(level);
+      if (order[normalized] > order[best]) best = normalized;
+    });
+    return best;
+  }
+
+  function normalizeConfidenceLevel(value) {
+    const lower = String(value || "").toLowerCase();
+    if (lower === "high" || lower === "elevated") return "high";
+    if (lower === "low" || lower === "faible") return "low";
+    return "moderate";
+  }
+
+  function buildCycleProfiles(sessions = []) {
+    const ledger = new Map();
+    sessions.forEach((session, order) => {
+      const profiles = session.student_profiles || {};
+      STUDENT_PROFILE_KEYS.forEach((category) => {
+        (profiles[category] || []).forEach((profile) => {
+          registerCycleProfileSignal(ledger, profile, category, session, order);
+        });
+      });
+    });
+    const collection = createCycleProfileCollection();
+    ledger.forEach((entry) => {
+      const category = resolveCycleProfileCategory(entry);
+      if (!category) return;
+      const formatted = formatCycleProfile(entry, category);
+      collection[category].push(formatted);
+    });
+    CYCLE_PROFILE_KEYS.forEach((key) => {
+      collection[key] = limitArray(dedupeProfiles(collection[key] || []), CYCLE_PROFILE_LIMITS[key] || 3);
+    });
+    return {
+      profiles: collection,
+      sentences: buildCycleProfileSentences(collection),
+    };
+  }
+
+  function registerCycleProfileSignal(ledger, profile = {}, category, session = {}, order = 0) {
+    if (!profile || !profile.student || !category) return;
+    const student = String(profile.student).trim();
+    if (!student) return;
+    const key = student.toLowerCase();
+    if (!ledger.has(key)) {
+      ledger.set(key, {
+        student,
+        counts: { to_support: 0, strengths: 0, to_confirm: 0 },
+        history: [],
+        firstSupportOrder: null,
+        lastSupportOrder: null,
+        lastStrengthOrder: null,
+        evidence: new Set(),
+        confidences: [],
+      });
+    }
+    const entry = ledger.get(key);
+    entry.counts[category] = (entry.counts[category] || 0) + 1;
+    entry.history.push({
+      category,
+      order,
+      sessionName: session.session_name || session.sessionName || `Séance ${order + 1}`,
+    });
+    if (category === "to_support") {
+      if (entry.firstSupportOrder == null || order < entry.firstSupportOrder) {
+        entry.firstSupportOrder = order;
+      }
+      entry.lastSupportOrder = order;
+    }
+    if (category === "strengths") {
+      entry.lastStrengthOrder = order;
+    }
+    (profile.evidence_fields || []).forEach((field) => {
+      if (field) entry.evidence.add(field);
+    });
+    if (profile.confidence) entry.confidences.push(profile.confidence);
+  }
+
+  function resolveCycleProfileCategory(entry) {
+    if (!entry) return null;
+    const supportCount = entry.counts?.to_support || 0;
+    const strengthCount = entry.counts?.strengths || 0;
+    if (
+      supportCount &&
+      strengthCount &&
+      entry.lastStrengthOrder != null &&
+      entry.firstSupportOrder != null &&
+      entry.lastStrengthOrder > entry.firstSupportOrder
+    ) {
+      return "progressing";
+    }
+    if (supportCount >= 2 && strengthCount === 0) return "stalled";
+    if (strengthCount >= Math.max(2, supportCount + 1)) return "strengths";
+    if (supportCount > 0 && strengthCount === 0) return "to_support";
+    if (strengthCount > 0 && supportCount === 0) return "strengths";
+    if ((entry.counts?.to_confirm || 0) > 0) return "to_confirm";
+    return null;
+  }
+
+  function formatCycleProfile(entry, category) {
+    return {
+      student: entry.student,
+      signal: describeCycleProfileSignal(entry, category),
+      evidence_fields: Array.from(entry.evidence || []),
+      confidence: pickHighestConfidence(entry.confidences || []),
+    };
+  }
+
+  function describeCycleProfileSignal(entry, category) {
+    if (category === "progressing") {
+      const start = entry.history.find((item) => item.category === "to_support");
+      const end = [...entry.history].reverse().find((item) => item.category === "strengths");
+      if (start && end) {
+        return `progresse de ${start.sessionName} à ${end.sessionName}`;
+      }
+      return "progression constatée en fin de cycle";
+    }
+    if (category === "stalled") {
+      return "difficultés récurrentes sur plusieurs séances";
+    }
+    if (category === "to_support") {
+      const last = entry.history[entry.history.length - 1];
+      return last ? `fragilités lors de ${last.sessionName}` : "fragilités observées récemment";
+    }
+    if (category === "strengths") {
+      const last = entry.history[entry.history.length - 1];
+      return last ? `réussites confirmées jusqu'à ${last.sessionName}` : "réussites répétées";
+    }
+    if (category === "to_confirm") {
+      return "signal isolé à confirmer";
+    }
+    return "";
+  }
+
+  function createMergedCycleAnalysis() {
+    return {
+      overview: [],
+      progressions: [],
+      stagnations: [],
+      regressions: [],
+      next_steps: [],
+      student_profiles: createCycleProfileCollection(),
+      student_profile_sentences: createCycleProfileSentences(),
+    };
+  }
+
+  function buildCycleOverviewSentences(sessions = []) {
+    if (!sessions.length) return [];
+    const activityLabel =
+      sessions[0]?.dictionary?.label || sessions[0]?.meta?.activityName || "Cycle";
+    const count = sessions.length;
+    const firstDate = formatCycleDate(sessions[0].session_date);
+    const lastDate = formatCycleDate(sessions[count - 1].session_date);
+    const statements = [`${activityLabel} — ${count} séance(s) analysées.`];
+    if (firstDate && lastDate) {
+      if (firstDate === lastDate) statements.push(`Dernière séance le ${lastDate}.`);
+      else statements.push(`Période du ${firstDate} au ${lastDate}.`);
+    } else if (lastDate) {
+      statements.push(`Dernière séance le ${lastDate}.`);
+    }
+    return limitArray(Array.from(new Set(statements.filter(Boolean))), 3);
+  }
+
+  function formatCycleDate(value) {
+    const timestamp = parseDateValue(value);
+    if (!timestamp) return null;
+    try {
+      return new Date(timestamp).toLocaleDateString("fr-FR");
+    } catch {
+      return new Date(timestamp).toISOString().slice(0, 10);
+    }
+  }
+
+  function analyzeCycleTrends(sessions = []) {
+    const result = {
+      progressions: [],
+      stagnations: [],
+      regressions: [],
+      trendNextSteps: [],
+    };
+    if (!sessions.length) return result;
+    const firstAnalytics = sessions[0].class_analytics || {};
+    const lastAnalytics = sessions[sessions.length - 1].class_analytics || {};
+    const firstMeasures = firstAnalytics.measures || {};
+    const lastMeasures = lastAnalytics.measures || {};
+
+    evaluateNumericTrend({
+      label: "Voies par élève",
+      firstValue: firstMeasures.voies?.mean_per_student,
+      lastValue: lastMeasures.voies?.mean_per_student,
+      threshold: 0.25,
+      formatter: (value) => `${round(value, 2)}`,
+      result,
+      regressionNextStep: "Planifier un volume minimal de voies pour tous.",
+    });
+
+    evaluateNumericTrend({
+      label: "Volume total de voies",
+      firstValue: firstMeasures.voies?.total,
+      lastValue: lastMeasures.voies?.total,
+      threshold: 5,
+      formatter: (value) => `${Math.round(value)}`,
+      result,
+      regressionNextStep: "Sécuriser les répétitions pour relancer le volume de passes.",
+    });
+
+    evaluateLevelTrend({
+      label: "Cotation médiane",
+      firstValue: firstMeasures.cotation?.median_level,
+      lastValue: lastMeasures.cotation?.median_level,
+      result,
+    });
+
+    evaluateThresholdTrend({
+      label: firstMeasures.cotation?.threshold?.level || "Seuil",
+      firstShare: firstMeasures.cotation?.threshold?.share,
+      lastShare: lastMeasures.cotation?.threshold?.share,
+      result,
+    });
+
+    evaluateHeterogeneityTrend({
+      firstLabel: firstMeasures.cotation?.heterogeneity?.label,
+      lastLabel: lastMeasures.cotation?.heterogeneity?.label,
+      result,
+    });
+
+    result.progressions = limitArray(Array.from(new Set(result.progressions.filter(Boolean))), 4);
+    result.stagnations = limitArray(Array.from(new Set(result.stagnations.filter(Boolean))), 4);
+    result.regressions = limitArray(Array.from(new Set(result.regressions.filter(Boolean))), 4);
+    result.trendNextSteps = limitArray(Array.from(new Set(result.trendNextSteps.filter(Boolean))), 4);
+    return result;
+  }
+
+  function evaluateNumericTrend({ label, firstValue, lastValue, threshold = 0.1, formatter = (value) => `${round(value, 2)}`, result, regressionNextStep = "" }) {
+    if (!Number.isFinite(firstValue) || !Number.isFinite(lastValue)) return;
+    const diff = lastValue - firstValue;
+    const sentence = `${label} : ${formatter(firstValue)} → ${formatter(lastValue)}.`;
+    if (Math.abs(diff) < threshold) {
+      result.stagnations.push(sentence);
+      return;
+    }
+    if (diff > 0) {
+      result.progressions.push(sentence);
+    } else {
+      result.regressions.push(sentence);
+      if (regressionNextStep) result.trendNextSteps.push(regressionNextStep);
+    }
+  }
+
+  function evaluateLevelTrend({ label, firstValue, lastValue, result }) {
+    const firstIndex = levelIndexFromValue(firstValue);
+    const lastIndex = levelIndexFromValue(lastValue);
+    if (firstIndex == null || lastIndex == null) return;
+    if (lastIndex === firstIndex) {
+      result.stagnations.push(`Cotation médiane stable (${label || firstValue}).`);
+      return;
+    }
+    if (lastIndex > firstIndex) {
+      result.progressions.push(`Cotation médiane progresse de ${firstValue} à ${lastValue}.`);
+    } else {
+      result.regressions.push(`Cotation médiane baisse de ${firstValue} à ${lastValue}.`);
+      result.trendNextSteps.push("Stabiliser les niveaux atteints avant d'augmenter la difficulté.");
+    }
+  }
+
+  function evaluateThresholdTrend({ label, firstShare, lastShare, result }) {
+    if (!Number.isFinite(firstShare) || !Number.isFinite(lastShare)) return;
+    const sentence = `${label} : ${toPercent(firstShare)} % → ${toPercent(lastShare)} %.`;
+    const diff = lastShare - firstShare;
+    if (Math.abs(diff) < 0.05) {
+      result.stagnations.push(sentence);
+      return;
+    }
+    if (diff > 0) {
+      result.progressions.push(sentence);
+    } else {
+      result.regressions.push(sentence);
+      result.trendNextSteps.push(`Réactiver les repères pour atteindre ${label}.`);
+    }
+  }
+
+  function evaluateHeterogeneityTrend({ firstLabel, lastLabel, result }) {
+    if (!firstLabel || !lastLabel) return;
+    const firstRank = heterogeneityRank(firstLabel);
+    const lastRank = heterogeneityRank(lastLabel);
+    if (firstRank == null || lastRank == null) return;
+    if (lastRank === firstRank) {
+      result.stagnations.push(`Hétérogénéité ${lastLabel}.`);
+      return;
+    }
+    if (lastRank < firstRank) {
+      result.progressions.push(`Hétérogénéité réduite (${firstLabel} → ${lastLabel}).`);
+    } else {
+      result.regressions.push(`Hétérogénéité en hausse (${firstLabel} → ${lastLabel}).`);
+      result.trendNextSteps.push("Prévoir une différenciation plus marquée pour réduire l'écart.");
+    }
+  }
+
+  function heterogeneityRank(label) {
+    const normalized = String(label || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    return HETEROGENEITY_RANK.hasOwnProperty(normalized) ? HETEROGENEITY_RANK[normalized] : null;
+  }
+
+  function levelIndexFromValue(value) {
+    if (!value) return null;
+    const normalized = normalizeLevelToken(value);
+    if (!normalized) return null;
+    const index = DEFAULT_LEVEL_SEQUENCE.indexOf(normalized);
+    return index >= 0 ? index : null;
+  }
+
+  function buildCycleNextSteps(sessions = [], trendNextSteps = []) {
+    if (!sessions.length) return trendNextSteps || [];
+    const sentences = [...(trendNextSteps || [])];
+    const lastSession = sessions[sessions.length - 1];
+    if (lastSession?.summary_sentences?.next_steps?.length) {
+      sentences.push(...lastSession.summary_sentences.next_steps);
+    }
+    return limitArray(Array.from(new Set(sentences.filter(Boolean))), 4);
+  }
+
+  function normalizeCycleSession(session = {}, summary = {}, manualText = "", index = 0) {
+    if (!session || typeof session !== "object") return null;
+    const normalized = { ...session };
+    let analytics = normalized.class_analytics;
+    if (!analytics && Array.isArray(normalized.dataset) && normalized.dataset.length) {
+      analytics = analyze({
+        dataset: normalized.dataset,
+        dictionary: normalized.dictionary || null,
+        summary: normalized.summary || summary,
+        manualText: normalized.manualText || manualText,
+      });
+    }
+    if (!analytics) return null;
+    normalized.class_analytics = analytics;
+    normalized.summary_sentences =
+      normalized.summary_sentences || analytics.summary_sentences || createSummarySentences();
+    normalized.student_profiles =
+      normalized.student_profiles || analytics.student_profiles || createStudentProfileCollection();
+    normalized.student_profile_sentences =
+      normalized.student_profile_sentences ||
+      analytics.student_profile_sentences ||
+      buildStudentProfileSentences(normalized.student_profiles);
+    normalized.session_name = normalized.session_name || normalized.sessionName || normalized.name || `Séance ${index + 1}`;
+    normalized.session_date = normalized.session_date || normalized.updatedAt || normalized.createdAt || null;
+    normalized.session_index = normalized.session_index || index + 1;
+    normalized.dictionary = normalized.dictionary || analytics.context?.dictionary || null;
+    normalized.meta = normalized.meta || {};
+    return normalized;
+  }
+
+  function parseDateValue(value) {
+    if (!value) return null;
+    const timestamp = Date.parse(value);
+    return Number.isNaN(timestamp) ? null : timestamp;
   }
 
   function buildClimbTrackStudentProfiles(students = new Map()) {
@@ -2125,5 +2796,7 @@
 
   window.ScanProfClassAnalytics = {
     analyze,
+    analyzeSessionBundle,
+    analyzeCycleBundle,
   };
 })();

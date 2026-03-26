@@ -64,7 +64,15 @@
     const contexte = payload.contexte || {};
     const objectif = MODE_OBJECTIVES[mode] || MODE_OBJECTIVES.bilan;
     const schema = MODE_SCHEMAS[mode] || SECTION_SCHEMA;
-    const referentiel = detectReferential({ contexte, payload });
+    const sessionBundle = payload.session_bundle || null;
+    const cycleBundle = payload.cycle_bundle || null;
+    const isCycleBundle = mode === "bilan" && cycleBundle?.sessions?.length > 1;
+    const isMultiSourceBundle = !isCycleBundle && mode === "bilan" && sessionBundle?.sources?.length > 1;
+    const referentiel = isCycleBundle
+      ? detectReferentialFromCycle(cycleBundle)
+      : isMultiSourceBundle
+      ? null
+      : detectReferential({ contexte, payload });
     const sessionMeta = {
       activityLabel:
         contexte.activite ||
@@ -86,8 +94,12 @@
     };
     const dataset = Array.isArray(payload.donnees_eleves) ? payload.donnees_eleves : payload.eleves || [];
     const datasetSignals = analyzeDatasetSignals({ referentiel, dataset });
-    const useLegacy = mode !== "bilan" || referentiel === "climb_track";
-    const instructions = useLegacy
+    const useLegacy = !isCycleBundle && !isMultiSourceBundle && (mode !== "bilan" || referentiel === "climb_track");
+    const instructions = isCycleBundle
+      ? buildCyclePrompt({ schema, objective: objectif, cycleBundle })
+      : isMultiSourceBundle
+      ? buildMultiSourcePrompt({ schema, objective: objectif, sessionBundle })
+      : useLegacy
       ? buildLegacyInstructions({ schema, objective: objectif, mode })
       : buildAIPrompt({
           referentiel,
@@ -112,6 +124,8 @@
       student_profile_sentences:
         payload.student_profile_sentences || payload.class_analytics?.student_profile_sentences || null,
       class_analytics: payload.class_analytics || null,
+      session_bundle: sessionBundle,
+      cycle_bundle: cycleBundle,
     };
 
   const messages = [
@@ -152,6 +166,58 @@
       objective,
     ];
     return sections.filter(Boolean).join("\n\n");
+  }
+
+  function buildMultiSourcePrompt({ schema, objective, sessionBundle }) {
+    const schemaStructure = buildStructureHint(schema);
+    const sourceLines = (sessionBundle?.sources || []).map((source, index) => {
+      const label = source?.app_label || source?.app_id || `Source ${index + 1}`;
+      const count = Array.isArray(source?.dataset) ? source.dataset.length : null;
+      return count != null ? `- ${label} (${count} entrées)` : `- ${label}`;
+    });
+    const lines = [
+      "MODE MULTI-APPLICATIONS — plusieurs référentiels QR ont alimenté cette séance.",
+      "Sources disponibles :",
+      sourceLines.length ? sourceLines.join("\n") : "- (sources non listées)",
+      "",
+      "Consignes spécifiques :",
+      "- Utilise d'abord `session_bundle.merged_session_analysis` pour décrire la vision globale (overview, strengths, needs_work, next_steps).",
+      "- Appuie-toi ensuite sur `session_bundle.sources[]` pour illustrer les constats en citant l'application concernée lorsque c'est pertinent.",
+      "- Ne fusionne pas les datasets : garde la provenance explicite (« Cross Training : … », « Climb Track : … »).",
+      "- `reperages_eleves` provient exclusivement de `merged_session_analysis.student_profiles` / `student_profile_sentences`. Si aucun profil fusionné n'est disponible, renvoie une liste vide sans inventer.",
+      "- Mentionne les limites lorsqu'une source manque de données plutôt que d'inventer.",
+      "- Chaque section texte doit tenir en ≤ 12 mots ; chaque liste contient 2 à 4 éléments factuels ou [].",
+      "- Les suites pédagogiques doivent proposer des actions concrètes tenant compte de l'ensemble des applications.",
+      "- Respecte strictement ce format JSON (aucun markdown, aucun texte avant/après) :",
+      schemaStructure,
+      "",
+      objective,
+    ];
+    return lines.filter(Boolean).join("\n");
+  }
+
+  function buildCyclePrompt({ schema, objective, cycleBundle }) {
+    const schemaStructure = buildStructureHint(schema);
+    const meta = cycleBundle?.cycle_meta || {};
+    const sessionCount = meta.session_count || (cycleBundle?.sessions?.length || 0);
+    const appLabel = meta.app_label || meta.activity_name || "Application";
+    const lines = [
+      `MODE BILAN DE CYCLE — ${appLabel} — ${sessionCount} séance(s).`,
+      "- Utilise en priorité `cycle_bundle.merged_cycle_analysis` :",
+      "  • `overview` → synthèse,",
+      "  • `progressions` → points forts,",
+      "  • `stagnations` + `regressions` → points à retravailler,",
+      "  • `next_steps` → suite proposée.",
+      "- Appuie-toi ensuite sur `cycle_bundle.sessions[]` pour illustrer les constats en citant les séances lorsque c’est pertinent.",
+      "- Mentionne la temporalité (début/fin de cycle) dès que possible.",
+      "- `reperages_eleves` repose uniquement sur `merged_cycle_analysis.student_profile_sentences`.",
+      "- Aucune invention : indique les limites si les données sont insuffisantes.",
+      "- Réponse attendue en JSON strict sans texte autour, avec exactement les clés suivantes :",
+      schemaStructure,
+      "",
+      objective,
+    ];
+    return lines.filter(Boolean).join("\n");
   }
 
   function buildCommonPromptSection({
@@ -317,6 +383,18 @@
       }
     }
     return null;
+  }
+
+  function detectReferentialFromCycle(cycleBundle) {
+    if (!cycleBundle?.cycle_meta) return null;
+    const candidate =
+      cycleBundle.cycle_meta.app_id ||
+      cycleBundle.cycle_meta.app_label ||
+      cycleBundle.cycle_meta.activity_name ||
+      "";
+    const normalized = normalizeReferentialName(candidate);
+    if (!normalized) return null;
+    return REFERENTIAL_ALIASES[normalized] || null;
   }
 
   function normalizeReferentialName(value) {
