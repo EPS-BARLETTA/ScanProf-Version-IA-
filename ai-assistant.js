@@ -89,6 +89,7 @@
   const MAX_TOTAL_COLUMNS = 18;
   const SESSION_META_KEY = "scanprof_current_session_meta";
   const MAX_CYCLE_SESSIONS = 5;
+  const CYCLE_DEBUG_PREFIX = "[ScanProf IA][Cycle]";
   const SESSION_BUNDLE_MIN_SOURCES = 2;
 
   let refs = {};
@@ -501,6 +502,8 @@
       summaryClass: document.getElementById("ai-summary-class"),
       summaryCount: document.getElementById("ai-summary-count"),
       summaryTypes: document.getElementById("ai-summary-types"),
+      modeIndicator: document.getElementById("ai-mode-indicator"),
+      cycleWarning: document.getElementById("ai-cycle-warning"),
       actionButtons: {
         assistant: document.getElementById("ai-action-assistant"),
         bilan: document.getElementById("ai-action-bilan"),
@@ -519,6 +522,7 @@
       modalContext: document.getElementById("ai-modal-context"),
       modalLoading: document.getElementById("ai-modal-loading"),
       modalContent: document.getElementById("ai-modal-content"),
+      modalModeIndicator: document.getElementById("ai-modal-mode-indicator"),
       copyBtn: document.getElementById("ai-copy-report-btn"),
       downloadBtn: document.getElementById("ai-download-report-btn"),
     };
@@ -528,6 +532,7 @@
     bindEvents();
     setupDictionaryHint();
     updateSummaryUI();
+    updateModeIndicators();
     const eventName = (window.ScanProfParticipants && window.ScanProfParticipants.eventName) || "scanprof:dataset-changed";
     document.addEventListener(eventName, () => updateSummaryUI());
   }
@@ -938,7 +943,9 @@
       lastQuestionText = intent === "question" ? (questionText || "").trim() : "";
       const studentProfiles = classAnalytics?.student_profiles || null;
       const studentProfileSentences = classAnalytics?.student_profile_sentences || null;
-      const sessionBundle = buildSessionBundle(collectSessionSources(), {
+      const sessionSources = collectSessionSources() || [];
+      const cycleSessions = collectCycleSessions() || [];
+      const sessionBundle = buildSessionBundle(sessionSources, {
         sessionMeta: {
           class_name: currentContext.className || "",
           session_name: currentContext.sessionName || "",
@@ -951,7 +958,7 @@
         interpretationEngine,
         analyticsEngine,
       });
-      const cycleBundle = buildCycleBundle(collectCycleSessions(), {
+      const cycleBundle = buildCycleBundle(cycleSessions, {
         sessionMeta,
         baseDictionary: dictionaryToUse,
         manualText: manualInterpretation,
@@ -959,6 +966,16 @@
         interpretationEngine,
         analyticsEngine,
       });
+      updateModeIndicators({
+        cycleBundle,
+        sessionBundle,
+        cycleCandidateCount: cycleSessions.length || 0,
+      });
+      if (cycleBundle) {
+        console.info(`${CYCLE_DEBUG_PREFIX} Cycle bundle ready`, cycleBundle);
+      } else {
+        console.info(`${CYCLE_DEBUG_PREFIX} Cycle bundle not created.`);
+      }
       const analysisInput = {
         contexte: buildContext(
           summary,
@@ -987,6 +1004,8 @@
         session_bundle: sessionBundle,
         cycle_bundle: cycleBundle,
       };
+      console.info("[ScanProf IA] cycle_bundle present", analysisInput.cycle_bundle);
+      console.info("[ScanProf IA] session_bundle present", analysisInput.session_bundle);
       const builder = window.ScanProfAIPrompt;
       if (!builder || typeof builder.buildPrompt !== "function") {
         throw new Error("Module de prompt introuvable.");
@@ -1820,6 +1839,24 @@
     }
   }
 
+  function updateModeIndicators({ cycleBundle = null, sessionBundle = null, cycleCandidateCount = 0 } = {}) {
+    const cycleCount = cycleBundle?.sessions?.length || 0;
+    const sourceCount = sessionBundle?.sources?.length || 0;
+    const hasCycle = cycleCount > 1;
+    let label = "Mode IA : séance";
+    if (hasCycle) {
+      label = `Mode IA : cycle (${cycleCount} séance${cycleCount > 1 ? "s" : ""})`;
+    } else if (sourceCount > 1) {
+      label = `Mode IA : multi-apps (${sourceCount} source${sourceCount > 1 ? "s" : ""})`;
+    }
+    if (refs.modeIndicator) refs.modeIndicator.textContent = label;
+    if (refs.modalModeIndicator) refs.modalModeIndicator.textContent = label;
+    if (refs.cycleWarning) {
+      const shouldShowWarning = !hasCycle && cycleCandidateCount > 1;
+      refs.cycleWarning.classList.toggle("sp-hidden", !shouldShowWarning);
+    }
+  }
+
   function inferTypeLabels(columns = []) {
     return columns
       .filter((col) => {
@@ -1855,8 +1892,11 @@
       const raw = localStorage.getItem(SESSION_META_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === "object" ? parsed : null;
+      const meta = parsed && typeof parsed === "object" ? parsed : null;
+      console.info(`${CYCLE_DEBUG_PREFIX} Session meta`, meta);
+      return meta;
     } catch {
+      console.warn(`${CYCLE_DEBUG_PREFIX} Session meta parse failed`);
       return null;
     }
   }
@@ -1967,6 +2007,12 @@
     const cls = classes.find((item) => item.id === sessionMeta.classId);
     const activity = cls?.activities?.find((act) => act.id === sessionMeta.activityId);
     if (!cls || !activity || !Array.isArray(activity.sessions) || !activity.sessions.length) return [];
+    console.info(`${CYCLE_DEBUG_PREFIX} Sessions trouvées`, {
+      classId: cls.id,
+      activityId: activity.id,
+      totalSessions: activity.sessions.length,
+      activityName: activity.name,
+    });
     return activity.sessions.map((session) => ({
       session_id: session.id,
       session_name: session.name,
@@ -1984,9 +2030,20 @@
   }
 
   function buildCycleBundle(collectedSessions = [], globalContext = {}) {
-    const sessions = (Array.isArray(collectedSessions) ? collectedSessions : []).filter(
-      (entry) => Array.isArray(entry?.dataset) && entry.dataset.length
-    );
+    const sessions = Array.isArray(collectedSessions) ? collectedSessions : [];
+    console.info(`${CYCLE_DEBUG_PREFIX} Cycle candidates`, { totalCandidates: sessions.length });
+    const datasetFiltered = [];
+    sessions.forEach((entry) => {
+      if (!Array.isArray(entry?.dataset) || !entry.dataset.length) {
+        console.warn(`${CYCLE_DEBUG_PREFIX} Rejet séance — dataset vide`, entry.session_name);
+        return;
+      }
+      datasetFiltered.push(entry);
+    });
+    if (datasetFiltered.length !== sessions.length) {
+      console.info(`${CYCLE_DEBUG_PREFIX} Après filtrage dataset`, datasetFiltered.length);
+    }
+    const sessionsFiltered = datasetFiltered;
     if (sessions.length < 2) return null;
     const analyticsEngine = globalContext.analyticsEngine || window.ScanProfClassAnalytics;
     if (!analyticsEngine || typeof analyticsEngine.analyzeCycleBundle !== "function") return null;
@@ -1996,12 +2053,17 @@
     const interpretationEngine = globalContext.interpretationEngine || null;
     const sessionMeta = globalContext.sessionMeta || null;
 
-    const sorted = sessions
+    const sorted = sessionsFiltered
       .map((session) => ({ ...session }))
       .sort((a, b) => (parseDateValue(a.session_date) || 0) - (parseDateValue(b.session_date) || 0));
     const limit = globalContext.cycleSessionLimit || MAX_CYCLE_SESSIONS;
     const selected = sorted.slice(Math.max(sorted.length - limit, 0));
 
+    console.info(`${CYCLE_DEBUG_PREFIX} Sessions retenues après tri`, {
+      selected: selected.length,
+      limit,
+      sessionNames: selected.map((s) => s.session_name),
+    });
     const normalized = [];
     let expectedDictionaryId = baseDictionary?.id || null;
     selected.forEach((rawSession, index) => {
@@ -2014,6 +2076,11 @@
       });
       if (!prepared || !prepared.dictionary_id) return;
       if (expectedDictionaryId && prepared.dictionary_id !== expectedDictionaryId) {
+        console.warn(`${CYCLE_DEBUG_PREFIX} Rejet séance — dictionnaire différent`, {
+          session: prepared.session_name,
+          dictionaryId: prepared.dictionary_id,
+          expectedDictionaryId,
+        });
         return;
       }
       if (!expectedDictionaryId) expectedDictionaryId = prepared.dictionary_id;
@@ -2047,11 +2114,13 @@
         "Cycle",
       session_count: normalized.length,
     };
-    return {
+    const bundle = {
       cycle_meta: cycleMeta,
       sessions: normalized,
       merged_cycle_analysis: merged,
     };
+    console.info(`${CYCLE_DEBUG_PREFIX} Cycle bundle final`, bundle);
+    return bundle;
   }
 
   function prepareCycleSession(rawSession = {}, index = 0, options = {}) {

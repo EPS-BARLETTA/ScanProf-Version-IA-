@@ -61,6 +61,12 @@
 
   function buildPrompt({ analysisInput, mode = "bilan" }) {
     const payload = analysisInput || {};
+    console.info("[ScanProf IA] prompt mode", {
+      hasCycle: !!payload?.cycle_bundle,
+      cycleSessions: payload?.cycle_bundle?.sessions?.length || 0,
+      hasMultiApps: !!payload?.session_bundle,
+      multiSources: payload?.session_bundle?.sources?.length || 0,
+    });
     const contexte = payload.contexte || {};
     const objectif = MODE_OBJECTIVES[mode] || MODE_OBJECTIVES.bilan;
     const schema = MODE_SCHEMAS[mode] || SECTION_SCHEMA;
@@ -111,6 +117,21 @@
           mode,
           datasetSignals,
         });
+    const promptBranch = isCycleBundle
+      ? "cycle"
+      : isMultiSourceBundle
+      ? "multi-apps"
+      : useLegacy && referentiel === "climb_track"
+      ? "climb-track-legacy"
+      : useLegacy
+      ? "legacy"
+      : "standard";
+    console.info("[ScanProf IA][Prompt] Branche sélectionnée", {
+      branch: promptBranch,
+      isCycleBundle,
+      isMultiSourceBundle,
+      referentiel,
+    });
 
   const content = {
       contexte,
