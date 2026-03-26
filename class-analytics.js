@@ -202,16 +202,20 @@
     normalizedSessions.forEach((session, index) => {
       session.session_index = index + 1;
     });
-    const overview = buildCycleOverviewSentences(normalizedSessions);
+    const overviewBase = buildCycleOverviewSentences(normalizedSessions);
     const trendInsights = analyzeCycleTrends(normalizedSessions);
     const cycleProfiles = buildCycleProfiles(normalizedSessions);
-    const nextSteps = buildCycleNextSteps(normalizedSessions, trendInsights.trendNextSteps);
+    const aggregatedSummary = aggregateCycleSummarySentences(normalizedSessions);
+    const baseNextSteps = buildCycleNextSteps(normalizedSessions, trendInsights.trendNextSteps);
     return {
-      overview,
-      progressions: trendInsights.progressions,
-      stagnations: trendInsights.stagnations,
-      regressions: trendInsights.regressions,
-      next_steps: nextSteps,
+      overview: combineUniqueStrings([overviewBase, aggregatedSummary.overview], 6),
+      progressions: combineUniqueStrings([trendInsights.progressions, aggregatedSummary.strengths], 5),
+      stagnations: combineUniqueStrings([trendInsights.stagnations, aggregatedSummary.needs_work], 5),
+      regressions: combineUniqueStrings(
+        [trendInsights.regressions, aggregatedSummary.needs_work],
+        5
+      ),
+      next_steps: combineUniqueStrings([baseNextSteps, aggregatedSummary.next_steps], 5),
       student_profiles: cycleProfiles.profiles,
       student_profile_sentences: cycleProfiles.sentences,
     };
@@ -1552,6 +1556,21 @@
     return list.filter(Boolean).slice(0, max);
   }
 
+  function combineUniqueStrings(lists = [], limit = 4) {
+    const seen = new Set();
+    const combined = [];
+    (lists || []).forEach((entries) => {
+      (entries || []).forEach((item) => {
+        const text = typeof item === "string" ? item.trim() : "";
+        if (!text) return;
+        if (seen.has(text)) return;
+        seen.add(text);
+        combined.push(text);
+      });
+    });
+    return combined.slice(0, limit);
+  }
+
   function normalizeBundleSource(source, fallbackSummary = {}, manualText = "", index = 0) {
     if (!source || typeof source !== "object") return null;
     const normalized = { ...source };
@@ -1847,6 +1866,89 @@
       statements.push(`Dernière séance le ${lastDate}.`);
     }
     return limitArray(Array.from(new Set(statements.filter(Boolean))), 3);
+  }
+
+  function aggregateCycleSummarySentences(sessions = []) {
+    const aggregated = {
+      overview: [],
+      strengths: [],
+      needs_work: [],
+      next_steps: [],
+    };
+    if (!Array.isArray(sessions) || !sessions.length) return aggregated;
+    const firstSession = sessions[0];
+    const lastSession = sessions[sessions.length - 1];
+    appendSessionSummarySentences(
+      aggregated.overview,
+      firstSession,
+      "overview",
+      `Début (${firstSession.session_name || "Séance 1"}) :`
+    );
+    appendSessionSummarySentences(
+      aggregated.overview,
+      lastSession,
+      "overview",
+      `Fin (${lastSession.session_name || `Séance ${sessions.length}`}) :`
+    );
+    appendSessionSummarySentences(
+      aggregated.strengths,
+      firstSession,
+      "strengths",
+      `Début (${firstSession.session_name || "Séance 1"}) :`
+    );
+    appendSessionSummarySentences(
+      aggregated.strengths,
+      lastSession,
+      "strengths",
+      `Fin (${lastSession.session_name || `Séance ${sessions.length}`}) :`
+    );
+    appendSessionSummarySentences(
+      aggregated.needs_work,
+      lastSession,
+      "needs_work",
+      `Fin (${lastSession.session_name || `Séance ${sessions.length}`}) :`
+    );
+    appendSessionSummarySentences(
+      aggregated.needs_work,
+      firstSession,
+      "needs_work",
+      `Début (${firstSession.session_name || "Séance 1"}) :`
+    );
+    appendSessionSummarySentences(
+      aggregated.next_steps,
+      lastSession,
+      "next_steps",
+      `Fin (${lastSession.session_name || `Séance ${sessions.length}`}) :`
+    );
+    sessions.forEach((session, index) => {
+      const label = session.session_name || `Séance ${index + 1}`;
+      const signals = session.class_analytics?.pedagogical_signals || [];
+      signals.slice(0, 2).forEach((signal) => {
+        const clean = String(signal || "").trim();
+        if (clean) aggregated.needs_work.push(`${label} : ${clean}`);
+      });
+      const limits = session.class_analytics?.limits || [];
+      limits.slice(0, 1).forEach((limitEntry) => {
+        const clean = String(limitEntry || "").trim();
+        if (clean) aggregated.needs_work.push(`${label} : ${clean}`);
+      });
+    });
+    aggregated.overview = limitArray(Array.from(new Set(aggregated.overview.filter(Boolean))), 6);
+    aggregated.strengths = limitArray(Array.from(new Set(aggregated.strengths.filter(Boolean))), 5);
+    aggregated.needs_work = limitArray(Array.from(new Set(aggregated.needs_work.filter(Boolean))), 5);
+    aggregated.next_steps = limitArray(Array.from(new Set(aggregated.next_steps.filter(Boolean))), 5);
+    return aggregated;
+  }
+
+  function appendSessionSummarySentences(target = [], session = {}, key = "", prefix = "", max = 2) {
+    if (!session || !key) return;
+    const sentences = session.summary_sentences?.[key];
+    if (!Array.isArray(sentences) || !sentences.length) return;
+    sentences.slice(0, max).forEach((sentence) => {
+      const clean = String(sentence || "").trim();
+      if (!clean) return;
+      target.push(prefix ? `${prefix} ${clean}` : clean);
+    });
   }
 
   function formatCycleDate(value) {

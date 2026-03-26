@@ -52,7 +52,17 @@
           <h1 id="activity-title">Activité</h1>
           <p id="activity-meta" style="margin:4px 0 0;color:var(--sp-muted);"></p>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+          <label for="cycle-dictionary-select" style="display:flex;flex-direction:column;font-size:0.85rem;gap:4px;">
+            Référentiel du cycle
+            <select id="cycle-dictionary-select" style="min-width:160px;padding:6px 10px;border-radius:8px;border:1px solid var(--sp-border);background:var(--sp-surface);color:var(--sp-text);">
+              <option value="">Auto</option>
+              <option value="climb_track">Climb Track</option>
+              <option value="cross_training">Cross Training</option>
+              <option value="arcathlon_v2">ArcAthlon V2</option>
+              <option value="laser_run">Laser Run</option>
+            </select>
+          </label>
           <button id="rename-activity-btn">✏️ Renommer</button>
           <button id="delete-activity-btn" class="button red">🗑 Supprimer</button>
           <button id="export-activity-btn">📤 Exporter l'activité (CSV)</button>

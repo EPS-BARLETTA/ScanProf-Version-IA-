@@ -69,7 +69,12 @@
     #ai-open-dictionary-inline{display:block;width:100%;text-align:center;margin-bottom:8px;}
     .ai-mode-indicator{margin-top:4px;font-size:0.85rem;font-weight:600;color:var(--sp-muted);}
     .ai-mode-indicator--inline{margin-top:6px;color:var(--sp-primary);}
+    .ai-mode-indicator--sub{font-size:0.8rem;color:var(--sp-muted);}
     .ai-mode-indicator--warning{color:var(--sp-accent-orange,#a85b00);}
+    .ai-cycle-diagnostics{margin-top:6px;padding:8px 10px;border-radius:10px;background:var(--sp-table-odd);border:1px solid var(--sp-border);font-size:0.82rem;color:var(--sp-text);}
+    .ai-cycle-diagnostics strong{display:block;margin-bottom:4px;font-size:0.82rem;}
+    .ai-cycle-diagnostics ul{margin:0;padding-left:18px;list-style:disc;}
+    .ai-cycle-diagnostics li{margin:2px 0;}
     .ai-status{min-height:1.1em;font-size:0.85rem;color:var(--sp-muted);}
     .ai-status.success{color:var(--sp-accent-green,#2e8b57);}
     .ai-status.error{color:var(--sp-accent-red,#c0392b);}
@@ -268,7 +273,12 @@
         </button>
       </div>
       <div class="ai-mode-indicator" id="ai-mode-indicator">Mode IA : séance</div>
+      <div class="ai-mode-indicator ai-mode-indicator--sub sp-hidden" id="ai-dictionary-indicator"></div>
       <div class="ai-mode-indicator ai-mode-indicator--warning sp-hidden" id="ai-cycle-warning">Cycle non activé</div>
+      <div class="ai-cycle-diagnostics sp-hidden" id="ai-cycle-diagnostics">
+        <strong>Diagnostics cycle</strong>
+        <ul id="ai-cycle-diagnostics-list"></ul>
+      </div>
       <button type="button" class="ai-btn outline" id="ai-open-dictionary-inline">
         📘 Gérer le référentiel
       </button>
@@ -299,6 +309,7 @@
           <strong id="ai-modal-title">Assistant IA</strong>
           <div id="ai-modal-subtitle" style="font-size:0.9rem;color:var(--sp-muted);"></div>
           <div id="ai-modal-mode-indicator" class="ai-mode-indicator ai-mode-indicator--inline">Mode IA : séance</div>
+          <div id="ai-modal-dictionary-indicator" class="ai-mode-indicator ai-mode-indicator--inline ai-mode-indicator--sub sp-hidden"></div>
         </div>
         <button type="button" class="ai-modal__close" id="ai-modal-close">✖</button>
       </div>

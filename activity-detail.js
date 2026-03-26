@@ -4,6 +4,14 @@
   const SESSION_META_KEY = "scanprof_current_session_meta";
   const AI_CONTEXT_KEY = "scanprof_ai_context";
   const CYCLE_TRIGGER_KEY = "scanprof_cycle_trigger";
+  const CYCLE_DICTIONARY_STORAGE = "scanprof_cycle_dictionary_map";
+  const CYCLE_DICTIONARY_OPTIONS = {
+    "": "Auto",
+    climb_track: "Climb Track",
+    cross_training: "Cross Training",
+    arcathlon_v2: "ArcAthlon V2",
+    laser_run: "Laser Run",
+  };
 
   let classes = [];
   let cls = null;
@@ -22,6 +30,7 @@
     els.sessionSave = document.getElementById("session-overlay-save");
     els.sessionCancel = document.getElementById("session-overlay-cancel");
     els.cycleBtn = document.getElementById("analyze-cycle-btn");
+    els.cycleDictionarySelect = document.getElementById("cycle-dictionary-select");
 
     classes = store.loadClasses();
     const url = new URL(window.location.href);
@@ -75,6 +84,10 @@
         triggerCycleAnalysis();
       });
     }
+    els.cycleDictionarySelect?.addEventListener("change", () => {
+      const value = (els.cycleDictionarySelect.value || "").trim();
+      setCycleDictionaryPreference(cls?.id, activity?.id, value);
+    });
     els.sessionSave.addEventListener("click", () => closeSessionEditor(true));
     els.sessionCancel.addEventListener("click", () => closeSessionEditor(false));
   }
@@ -118,6 +131,10 @@
   function updateCycleButtonState() {
     if (!els.cycleBtn) return;
     const count = activity.sessions.length;
+    if (els.cycleDictionarySelect) {
+      const preferred = getCycleDictionaryPreference(cls?.id, activity?.id);
+      els.cycleDictionarySelect.value = preferred;
+    }
     if (count >= 2) {
       els.cycleBtn.disabled = false;
       els.cycleBtn.textContent = "🚀 Analyser le cycle";
@@ -299,6 +316,7 @@
 
   function persistSessionMeta(session) {
     if (!session) return;
+    const preferredDictionary = getCycleDictionaryPreference(cls?.id, activity?.id);
     const meta = {
       classId: cls?.id || null,
       className: cls?.name || "",
@@ -309,6 +327,7 @@
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
       savedAt: new Date().toISOString(),
+      forcedDictionaryId: preferredDictionary || null,
     };
     try {
       localStorage.setItem(SESSION_META_KEY, JSON.stringify(meta));
@@ -334,12 +353,16 @@
 
   function triggerCycleAnalysis() {
     if (!activity || activity.sessions.length < 2) return;
+    const preferredDictionary = getCycleDictionaryPreference(cls?.id, activity?.id);
+    const forcedDictionaryId = preferredDictionary ? preferredDictionary : null;
     const payload = {
       classId: cls?.id || null,
       className: cls?.name || "",
       activityId: activity.id,
       activityName: activity.name,
       sessionCount: activity.sessions.length,
+      forcedDictionaryId,
+      forcedDictionaryLabel: forcedDictionaryId ? CYCLE_DICTIONARY_OPTIONS[forcedDictionaryId] || forcedDictionaryId : null,
       requestedAt: new Date().toISOString(),
     };
     const contextPayload = {
@@ -355,16 +378,44 @@
         JSON.stringify({
           classId: cls?.id || null,
           className: cls?.name || "",
-          activityId: activity?.id || null,
-          activityName: activity?.name || "",
-          cycleName: activity?.name || "",
-          savedAt: new Date().toISOString(),
-        })
-      );
+        activityId: activity?.id || null,
+        activityName: activity?.name || "",
+        cycleName: activity?.name || "",
+        forcedDictionaryId,
+        savedAt: new Date().toISOString(),
+      })
+    );
       localStorage.setItem(AI_CONTEXT_KEY, JSON.stringify(contextPayload));
     } catch (err) {
       console.warn("Impossible de préparer l'analyse de cycle", err);
     }
     window.location.href = "participants.html?cycle=1";
+  }
+
+  function getCycleDictionaryPreference(classId, activityId) {
+    if (!classId || !activityId) return "";
+    const map = loadCycleDictionaryMap();
+    return map[`${classId}::${activityId}`] || "";
+  }
+
+  function setCycleDictionaryPreference(classId, activityId, value) {
+    if (!classId || !activityId) return;
+    const map = loadCycleDictionaryMap();
+    if (value) map[`${classId}::${activityId}`] = value;
+    else delete map[`${classId}::${activityId}`];
+    try {
+      localStorage.setItem(CYCLE_DICTIONARY_STORAGE, JSON.stringify(map));
+    } catch (err) {
+      console.warn("Impossible d'enregistrer la préférence de référentiel cycle", err);
+    }
+  }
+
+  function loadCycleDictionaryMap() {
+    try {
+      const raw = localStorage.getItem(CYCLE_DICTIONARY_STORAGE);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
   }
 })();
