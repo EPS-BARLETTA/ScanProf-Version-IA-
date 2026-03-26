@@ -968,6 +968,10 @@
         analyticsEngine,
       });
       const cycleDiagnostics = getCycleDiagnostics();
+      console.info("[ScanProf IA] cycle diagnostics", {
+        totalSessions: cycleDiagnostics.totalCandidates || 0,
+        retainedSessions: cycleDiagnostics.retained || 0,
+      });
       updateModeIndicators({
         cycleBundle,
         sessionBundle,
@@ -1860,28 +1864,28 @@
     const detailRetained = hasCycle ? cycleCount : cycleRetainedCount;
     const totalCandidates = cycleCandidateCount || cycleCount;
     let detailText = "";
-    if (totalCandidates > 0) {
-      const retainedLabel = `séance${detailRetained > 1 ? "s" : ""}`;
-      const retenueWord = detailRetained > 1 ? "retenues" : "retenue";
+    const retainedLabel = `séance${Math.max(detailRetained, 1) > 1 ? "s" : ""}`;
+    const retenueWord = Math.max(detailRetained, 1) > 1 ? "retenues" : "retenue";
+    if (totalCandidates > 1) {
       if (hasCycle) {
         detailText = `Cycle : ${detailRetained} ${retainedLabel} ${retenueWord} sur ${totalCandidates}`;
-      } else if (totalCandidates > 1) {
+      } else {
         detailText = `Cycle non activé : ${detailRetained} ${retainedLabel} ${retenueWord} sur ${totalCandidates}`;
       }
+    } else {
+      const effectiveTotal = totalCandidates || 1;
+      const totalLabel = `séance${effectiveTotal > 1 ? "s" : ""}`;
+      detailText = `Cycle : ${effectiveTotal} ${totalLabel} (pas de cycle disponible)`;
     }
     if (refs.modeIndicator) refs.modeIndicator.textContent = label;
     if (refs.modalModeIndicator) {
       refs.modalModeIndicator.textContent = detailText ? `${label} — ${detailText}` : label;
     }
     if (refs.cycleWarning) {
-      if (detailText) {
-        refs.cycleWarning.textContent = detailText;
-        refs.cycleWarning.classList.remove("sp-hidden");
-        if (hasCycle) refs.cycleWarning.classList.remove("ai-mode-indicator--warning");
-        else refs.cycleWarning.classList.add("ai-mode-indicator--warning");
-      } else {
-        refs.cycleWarning.classList.add("sp-hidden");
-      }
+      refs.cycleWarning.textContent = detailText;
+      refs.cycleWarning.classList.remove("sp-hidden");
+      if (hasCycle) refs.cycleWarning.classList.remove("ai-mode-indicator--warning");
+      else refs.cycleWarning.classList.add("ai-mode-indicator--warning");
     }
   }
 
