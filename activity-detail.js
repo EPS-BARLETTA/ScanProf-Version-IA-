@@ -3,6 +3,7 @@
   if (!store) return;
   const SESSION_META_KEY = "scanprof_current_session_meta";
   const AI_CONTEXT_KEY = "scanprof_ai_context";
+  const CYCLE_TRIGGER_KEY = "scanprof_cycle_trigger";
 
   let classes = [];
   let cls = null;
@@ -20,6 +21,7 @@
     els.sessionInfo = document.getElementById("session-overlay-info");
     els.sessionSave = document.getElementById("session-overlay-save");
     els.sessionCancel = document.getElementById("session-overlay-cancel");
+    els.cycleBtn = document.getElementById("analyze-cycle-btn");
 
     classes = store.loadClasses();
     const url = new URL(window.location.href);
@@ -67,12 +69,19 @@
       openSessionEditor(newSession, true);
       els.newSessionName.value = "";
     });
+    if (els.cycleBtn) {
+      els.cycleBtn.addEventListener("click", () => {
+        if (activity.sessions.length < 2) return;
+        triggerCycleAnalysis();
+      });
+    }
     els.sessionSave.addEventListener("click", () => closeSessionEditor(true));
     els.sessionCancel.addEventListener("click", () => closeSessionEditor(false));
   }
 
   function render() {
     document.getElementById("activity-meta").textContent = `${activity.sessions.length} séance(s)`;
+    updateCycleButtonState();
     renderSessions();
   }
 
@@ -104,6 +113,20 @@
       const id = btn.getAttribute("data-id");
       btn.addEventListener("click", () => handleSessionAction(action, id));
     });
+  }
+
+  function updateCycleButtonState() {
+    if (!els.cycleBtn) return;
+    const count = activity.sessions.length;
+    if (count >= 2) {
+      els.cycleBtn.disabled = false;
+      els.cycleBtn.textContent = "🚀 Analyser le cycle";
+      els.cycleBtn.title = `Analyser ${count} séance${count > 1 ? "s" : ""} archivée${count > 1 ? "s" : ""}`;
+    } else {
+      els.cycleBtn.disabled = true;
+      els.cycleBtn.textContent = "Cycle indisponible (au moins 2 séances)";
+      els.cycleBtn.title = "Ajoutez des séances pour activer l'analyse de cycle.";
+    }
   }
 
   function handleSessionAction(action, id) {
@@ -308,4 +331,40 @@
   }
 
   window.addEventListener("beforeunload", clearSessionMeta);
+
+  function triggerCycleAnalysis() {
+    if (!activity || activity.sessions.length < 2) return;
+    const payload = {
+      classId: cls?.id || null,
+      className: cls?.name || "",
+      activityId: activity.id,
+      activityName: activity.name,
+      sessionCount: activity.sessions.length,
+      requestedAt: new Date().toISOString(),
+    };
+    const contextPayload = {
+      classe: cls?.name || "",
+      activite: activity?.name || "",
+      seance: `Cycle (${activity.sessions.length} séances)`,
+      date: new Date().toISOString(),
+    };
+    try {
+      localStorage.setItem(CYCLE_TRIGGER_KEY, JSON.stringify(payload));
+      localStorage.setItem(
+        SESSION_META_KEY,
+        JSON.stringify({
+          classId: cls?.id || null,
+          className: cls?.name || "",
+          activityId: activity?.id || null,
+          activityName: activity?.name || "",
+          cycleName: activity?.name || "",
+          savedAt: new Date().toISOString(),
+        })
+      );
+      localStorage.setItem(AI_CONTEXT_KEY, JSON.stringify(contextPayload));
+    } catch (err) {
+      console.warn("Impossible de préparer l'analyse de cycle", err);
+    }
+    window.location.href = "participants.html?cycle=1";
+  }
 })();

@@ -91,6 +91,7 @@
   const MAX_CYCLE_SESSIONS = 5;
   const CYCLE_DEBUG_PREFIX = "[ScanProf IA][Cycle]";
   const SESSION_BUNDLE_MIN_SOURCES = 2;
+  const CYCLE_TRIGGER_KEY = "scanprof_cycle_trigger";
 
   let refs = {};
   let lastReportText = "";
@@ -533,6 +534,7 @@
     bindEvents();
     setupDictionaryHint();
     updateSummaryUI();
+    checkPendingCycleTrigger();
     updateModeIndicators();
     const eventName = (window.ScanProfParticipants && window.ScanProfParticipants.eventName) || "scanprof:dataset-changed";
     document.addEventListener(eventName, () => updateSummaryUI());
@@ -1846,6 +1848,12 @@
     }
   }
 
+  function checkPendingCycleTrigger() {
+    const trigger = consumeCycleTriggerRequest();
+    if (!trigger) return;
+    setTimeout(() => launchCycleAnalysisFromActivity(trigger), 150);
+  }
+
   function updateModeIndicators({
     cycleBundle = null,
     sessionBundle = null,
@@ -2024,11 +2032,14 @@
     return plan;
   }
 
-  function collectCycleSessions() {
+  function collectCycleSessions(options = {}) {
     const store = window.ScanProfClassesStore;
     if (!store || typeof store.loadClasses !== "function") return [];
-    const sessionMeta = getStoredSessionMeta();
-    if (!sessionMeta?.classId || !sessionMeta?.activityId) return [];
+    const sessionMetaOverride = options.sessionMetaOverride || null;
+    const sessionMeta = sessionMetaOverride || getStoredSessionMeta() || {};
+    const targetClassId = options.classId || sessionMeta?.classId;
+    const targetActivityId = options.activityId || sessionMeta?.activityId;
+    if (!targetClassId || !targetActivityId) return [];
     let classes = [];
     try {
       classes = store.loadClasses() || [];
@@ -2036,8 +2047,8 @@
       console.warn("[ScanProf IA] Impossible de charger les classes pour le cycle.", err);
       return [];
     }
-    const cls = classes.find((item) => item.id === sessionMeta.classId);
-    const activity = cls?.activities?.find((act) => act.id === sessionMeta.activityId);
+    const cls = classes.find((item) => item.id === targetClassId);
+    const activity = cls?.activities?.find((act) => act.id === targetActivityId);
     if (!cls || !activity || !Array.isArray(activity.sessions) || !activity.sessions.length) return [];
     console.info(`${CYCLE_DEBUG_PREFIX} Sessions trouvées`, {
       classId: cls.id,
@@ -2061,6 +2072,23 @@
     }));
   }
 
+  function consumeCycleTriggerRequest() {
+    try {
+      const raw = localStorage.getItem(CYCLE_TRIGGER_KEY);
+      if (!raw) return null;
+      localStorage.removeItem(CYCLE_TRIGGER_KEY);
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      try {
+        localStorage.removeItem(CYCLE_TRIGGER_KEY);
+      } catch {
+        /* noop */
+      }
+      return null;
+    }
+  }
+
   function setCycleDiagnostics(total = 0, retained = 0) {
     lastCycleDiagnostics = {
       totalCandidates: Number.isFinite(total) && total > 0 ? total : 0,
@@ -2070,6 +2098,171 @@
 
   function getCycleDiagnostics() {
     return { ...lastCycleDiagnostics };
+  }
+
+  async function launchCycleAnalysisFromActivity(trigger = {}) {
+    if (!trigger?.classId || !trigger?.activityId) return;
+    const statusTarget = refs.runStatus || null;
+    setStatus(statusTarget, "Analyse du cycle en préparation...", "info");
+    const providerConfig = getProviderConfig();
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      setStatus(statusTarget, "Clé API manquante pour lancer l’analyse du cycle.", "error");
+      return;
+    }
+    const cycleSessions = collectCycleSessions({
+      classId: trigger.classId,
+      activityId: trigger.activityId,
+      sessionMetaOverride: {
+        classId: trigger.classId,
+        className: trigger.className || "",
+        activityId: trigger.activityId,
+        activityName: trigger.activityName || "",
+      },
+    });
+    if (cycleSessions.length < 2) {
+      setStatus(statusTarget, "Cycle indisponible : moins de deux séances exploitables.", "error");
+      return;
+    }
+    const notes = refs.notesField?.value || "";
+    const manualInterpretation = refs.interpretationField?.value || localStorage.getItem(STORAGE.INTERPRETATION) || "";
+    const storedContext = {
+      classe: trigger.className || "",
+      activite: trigger.activityName || "",
+      seance: `Cycle (${trigger.sessionCount || cycleSessions.length} séances)`,
+      date: new Date().toISOString(),
+    };
+    const manualEntry = getManualDictionaryEntry(storedContext);
+    const autoDictionary = getActivityDictionary(storedContext.activite || "");
+    const dictionaryToUse = manualEntry?.dictionary || autoDictionary;
+    rememberAutoDictionary(storedContext, dictionaryToUse);
+    currentContext = {
+      className: trigger.className || "",
+      activityName: trigger.activityName || "",
+      sessionName: storedContext.seance,
+      providerLabel: providerConfig.label,
+      intent: "bilan",
+      storedContext,
+      sessionMeta: {
+        classId: trigger.classId,
+        className: trigger.className || "",
+        activityId: trigger.activityId,
+        activityName: trigger.activityName || "",
+      },
+      totalEntries: 0,
+      usedEntries: 0,
+      studentCount: 0,
+      sessionDate: new Date().toISOString(),
+      dictionaryInfo: dictionaryToUse
+        ? {
+            id: dictionaryToUse.id,
+            label: dictionaryToUse.label || dictionaryToUse.id || "Activité",
+            source: manualEntry ? "manual" : dictionaryToUse.source || "default",
+          }
+        : null,
+      preAnalysis: null,
+    };
+    const interpretationEngine = window.ScanProfAIInterpretationEngine;
+    const analyticsEngine = window.ScanProfClassAnalytics;
+    const cycleBundle = buildCycleBundle(cycleSessions, {
+      sessionMeta: {
+        classId: trigger.classId,
+        className: trigger.className || "",
+        activityId: trigger.activityId,
+        activityName: trigger.activityName || "",
+        cycleName: trigger.activityName || "",
+      },
+      baseDictionary: dictionaryToUse,
+      manualText: manualInterpretation,
+      summary: {},
+      interpretationEngine,
+      analyticsEngine,
+    });
+    const diagnostics = getCycleDiagnostics();
+    updateModeIndicators({
+      cycleBundle,
+      sessionBundle: null,
+      cycleCandidateCount: diagnostics.totalCandidates || cycleSessions.length,
+      cycleRetainedCount: diagnostics.retained || (cycleBundle?.sessions?.length || 0),
+    });
+    if (!cycleBundle) {
+      setStatus(statusTarget, "Analyse du cycle impossible : données insuffisantes.", "error");
+      return;
+    }
+    const representativeSession =
+      cycleBundle.sessions[cycleBundle.sessions.length - 1] || cycleBundle.sessions[0];
+    const sampleDataset = Array.isArray(representativeSession?.dataset)
+      ? representativeSession.dataset.slice(0, MAX_ELEVES)
+      : [];
+    const summary = summarizeSubsetEntries(sampleDataset, representativeSession?.meta || {});
+    const interpretationSupport = buildInterpretationSupport({
+      columns: summary.columns || [],
+      activityName: storedContext.activite || "",
+      manualText: manualInterpretation,
+      dictionary: dictionaryToUse,
+    });
+    openModal();
+    setModalLoading(true);
+    setPanelBusy(true);
+    const analysisInput = {
+      contexte: buildContext(
+        summary,
+        notes,
+        sampleDataset.length,
+        sampleDataset.length,
+        providerConfig.key,
+        "bilan",
+        "",
+        storedContext,
+        interpretationSupport,
+        representativeSession?.pre_analysis || null,
+        representativeSession?.class_analytics || null,
+        representativeSession?.student_profiles || null,
+        representativeSession?.student_profile_sentences || null
+      ),
+      eleves: sampleDataset,
+      intent: "bilan",
+      questionText: "",
+      interpretation: interpretationSupport,
+      pre_analysis: representativeSession?.pre_analysis || null,
+      summary_sentences: representativeSession?.summary_sentences || null,
+      student_profiles: representativeSession?.student_profiles || null,
+      student_profile_sentences: representativeSession?.student_profile_sentences || null,
+      class_analytics: representativeSession?.class_analytics || null,
+      session_bundle: null,
+      cycle_bundle: cycleBundle,
+    };
+    console.info("[ScanProf IA] cycle_bundle present", analysisInput.cycle_bundle);
+    console.info("[ScanProf IA] session_bundle present", analysisInput.session_bundle);
+    try {
+      const builder = window.ScanProfAIPrompt;
+      if (!builder || typeof builder.buildPrompt !== "function") {
+        throw new Error("Module de prompt introuvable.");
+      }
+      const { messages, schema } = builder.buildPrompt({ analysisInput, mode: "bilan" });
+      logPromptDiagnostics(messages, sampleDataset, summary.columns || []);
+      const model = getSelectedModel();
+      const processed = await generateAIResponseWithRetry({
+        providerKey: providerConfig.key,
+        apiKey,
+        model,
+        messages,
+        schema,
+        options: { temperature: 0.25, max_tokens: 900, intent: "bilan" },
+      });
+      renderReport(schema, processed);
+      setStatus(statusTarget, "Analyse de cycle terminée 🎉", "success");
+      setModalLoading(false);
+      setPanelBusy(false);
+    } catch (err) {
+      const userMessage = err?.userMessage || err?.message || "Analyse de cycle impossible pour le moment.";
+      if (err?.logMessage) console.error(err.logMessage, err);
+      else console.error(err);
+      setStatus(statusTarget, userMessage, "error");
+      renderFallbackError(userMessage);
+      setModalLoading(false);
+      setPanelBusy(false);
+    }
   }
 
   function buildCycleBundle(collectedSessions = [], globalContext = {}) {
