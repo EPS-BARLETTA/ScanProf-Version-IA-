@@ -231,7 +231,7 @@
       "- Décris la dynamique temporelle du cycle : mentionne ce qui change entre le début et la fin (ex. « moins d’absences », « niveau médian plus élevé »).",
       "- Reformule des suites pédagogiques concrètes à partir de `next_steps`; ajoute-en seulement si elles sont justifiées par les données.",
       "- `reperages_eleves` repose exclusivement sur `merged_cycle_analysis.student_profile_sentences`; si aucun profil fiable n’est fourni, renvoie [].",
-      "- En cas de données partielles, propose une lecture prudente plutôt que « Aucune information disponible ».",
+      "- Les données partielles ne justifient jamais « Aucune information disponible » : base la synthèse sur la continuité du cycle, l'organisation des séances, la qualité de collecte et des améliorations concrètes du suivi.",
       "- Tu peux citer ponctuellement `cycle_bundle.sessions[]` (ex. « Séance 2 ») pour étayer un constat sans recalculer.",
       "- Réponse attendue en JSON strict sans texte autour, avec exactement les clés suivantes :",
       schemaStructure,

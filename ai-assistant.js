@@ -104,6 +104,18 @@
     colonnes_insuffisantes: "colonnes non reconnues",
     signature_invalide: "séance incompatible",
   };
+  const CYCLE_MIN_SESSIONS_FOR_FALLBACK = 2;
+  const CYCLE_ULTIMATE_FALLBACKS = {
+    points_forts: [
+      "Cycle maintenu sur plusieurs séances malgré des relevés partiels.",
+      "Engagement du groupe confirmé sur l'activité retenue.",
+    ],
+    suite_proposee: [
+      "Structurer un suivi prévu/réalisé simple pour chaque atelier.",
+      "Stabiliser le protocole de collecte avec les mêmes colonnes à chaque séance.",
+      "Poursuivre le cycle en notant des indicateurs réguliers séance après séance.",
+    ],
+  };
 
   let refs = {};
   let lastReportText = "";
@@ -906,6 +918,7 @@
         preAnalysis: null,
         cycleAnalysis: null,
         isCycle: false,
+        cycleSessionCount: 0,
       };
       if (dictionaryToUse) {
         currentContext.dictionaryInfo = {
@@ -1006,12 +1019,14 @@
         cycleRetainedCount: cycleDiagnostics.retained || 0,
         cycleDiagnostics,
       });
-      if (cycleBundle?.merged_cycle_analysis) {
+      const retainedCycleSessions = cycleBundle?.sessions?.length || 0;
+      currentContext.cycleSessionCount = retainedCycleSessions;
+      if (cycleBundle?.merged_cycle_analysis && retainedCycleSessions >= CYCLE_MIN_SESSIONS_FOR_FALLBACK) {
         currentContext.isCycle = true;
         currentContext.cycleAnalysis = cycleBundle.merged_cycle_analysis;
       } else {
         currentContext.isCycle = false;
-        currentContext.cycleAnalysis = null;
+        currentContext.cycleAnalysis = cycleBundle?.merged_cycle_analysis || null;
       }
       if (cycleBundle) {
         console.info(`${CYCLE_DEBUG_PREFIX} Cycle bundle ready`, cycleBundle);
@@ -1538,18 +1553,23 @@
     const list = Array.isArray(schema) && schema.length ? schema : window.ScanProfAIPrompt.SECTION_SCHEMA || [];
     debugSchemaConsistency(schema);
     const localOverrides = buildLocalSectionOverrides();
-    const entries = list.map((section) => {
+    let entries = list.map((section) => {
       const localValue = localOverrides[section.key];
       const llmValue = data ? data[section.key] : null;
       const value = resolveSectionValue(section, localValue, llmValue);
       return {
         key: section.key,
         label: section.label,
+        type: section.type || "text",
         value,
-        content: valueToPlainText(value) || EMPTY_SECTION_TEXT,
       };
     });
-    const filteredEntries = entries.filter((entry) => {
+    entries = applyCycleUltimateFallback(entries);
+    const entriesWithContent = entries.map((entry) => ({
+      ...entry,
+      content: valueToPlainText(entry.value) || EMPTY_SECTION_TEXT,
+    }));
+    const filteredEntries = entriesWithContent.filter((entry) => {
       if (entry.key === STUDENT_PROFILE_SECTION_KEY) {
         return Array.isArray(entry.value) && entry.value.length > 0;
       }
@@ -1692,6 +1712,51 @@
       }
     }
     return overrides;
+  }
+
+  function applyCycleUltimateFallback(entries = []) {
+    if (!shouldApplyCycleFallback()) return entries;
+    return entries.map((entry) => {
+      if (!entry) return entry;
+      if (entry.key === "points_forts" && !hasMeaningfulCycleList(entry.value)) {
+        return { ...entry, value: CYCLE_ULTIMATE_FALLBACKS.points_forts.slice() };
+      }
+      if (entry.key === "suite_proposee" && !hasMeaningfulCycleList(entry.value)) {
+        return { ...entry, value: CYCLE_ULTIMATE_FALLBACKS.suite_proposee.slice() };
+      }
+      return entry;
+    });
+  }
+
+  function shouldApplyCycleFallback() {
+    if (!currentContext || !currentContext.isCycle) return false;
+    const sessionCount = currentContext.cycleSessionCount || 0;
+    return sessionCount >= CYCLE_MIN_SESSIONS_FOR_FALLBACK;
+  }
+
+  function hasMeaningfulCycleList(value) {
+    if (Array.isArray(value)) {
+      return value.some((entry) => !isCycleEmptyToken(entry));
+    }
+    return !isCycleEmptyToken(value);
+  }
+
+  function isCycleEmptyToken(entry) {
+    const normalized = normalizeCycleEmptyToken(entry);
+    if (!normalized) return true;
+    return (
+      normalized === "aucune information disponible" ||
+      normalized === "aucune information exploitable" ||
+      normalized === "aucune donnée exploitable"
+    );
+  }
+
+  function normalizeCycleEmptyToken(entry) {
+    if (entry == null) return "";
+    return String(entry)
+      .trim()
+      .replace(/[.!;:?]+$/g, "")
+      .toLowerCase();
   }
 
   function resolveSectionValue(section, localValue, llmValue) {
@@ -2374,6 +2439,10 @@
           }
         : null,
       preAnalysis: null,
+      classAnalytics: null,
+      cycleAnalysis: null,
+      isCycle: false,
+      cycleSessionCount: 0,
     };
     const interpretationEngine = window.ScanProfAIInterpretationEngine;
     const analyticsEngine = window.ScanProfClassAnalytics;
@@ -2394,12 +2463,14 @@
       interpretationEngine,
       analyticsEngine,
     });
-    if (cycleBundle?.merged_cycle_analysis) {
+    const retainedCycleSessions = cycleBundle?.sessions?.length || 0;
+    currentContext.cycleSessionCount = retainedCycleSessions;
+    if (cycleBundle?.merged_cycle_analysis && retainedCycleSessions >= CYCLE_MIN_SESSIONS_FOR_FALLBACK) {
       currentContext.isCycle = true;
       currentContext.cycleAnalysis = cycleBundle.merged_cycle_analysis;
     } else {
       currentContext.isCycle = false;
-      currentContext.cycleAnalysis = null;
+      currentContext.cycleAnalysis = cycleBundle?.merged_cycle_analysis || null;
     }
     const diagnostics = getCycleDiagnostics();
     updateModeIndicators({
