@@ -98,6 +98,10 @@
     strengths: 2,
     to_confirm: 2,
   };
+  const STUDENT_RANKING_KEYS = ["strongest", "weakest", "below_attempt_average"];
+  const STUDENT_RANKING_LIMIT = 3;
+  const MIN_STUDENT_RANKING_STUDENTS = 3;
+  const STUDENT_HISTORY_LIMIT = 8;
   const HETEROGENEITY_RANK = {
     faible: 0,
     "faible": 0,
@@ -119,26 +123,37 @@
     };
   }
 
-  function analyze({ dataset = [], dictionary = null, summary = {}, manualText = "" } = {}) {
+  function analyze({ dataset = [], dictionary = null, summary = {}, manualText = "", studentRequest = null } = {}) {
     const entries = Array.isArray(dataset) ? dataset.filter((entry) => entry && typeof entry === "object") : [];
     const { students, studentCount, studentStats, entryKeys } = indexStudents(entries);
     const context = buildContext({ summary, dictionary, entryCount: entries.length, studentCount });
     const dataQuality = buildDataQuality({ entries, summary, studentStats, dictionary });
     const classOverview = buildClassOverview({ entries, students, studentCount });
+    const translationProfile = fetchTranslationProfile(dictionary);
+    if (translationProfile) {
+      context.translation_profile = {
+        id: translationProfile.id,
+        analysis_profile: translationProfile.analysisProfile,
+        minimum_signals: translationProfile.minimumUsableSignals,
+        fallback_focus: translationProfile.fallbackFocus,
+      };
+    }
 
     const base = {
       context,
       data_quality: dataQuality,
-    class_overview: classOverview,
-    distributions: {},
-    measures: {},
-    comparisons: [],
-    student_groups: [],
-    pedagogical_signals: [],
-    limits: [],
-    summary_sentences: createSummarySentences(),
-    student_profiles: createStudentProfileCollection(),
-    student_profile_sentences: createStudentProfileSentences(),
+      class_overview: classOverview,
+      distributions: {},
+      measures: {},
+      comparisons: [],
+      student_groups: [],
+      pedagogical_signals: [],
+      limits: [],
+      summary_sentences: createSummarySentences(),
+      student_profiles: createStudentProfileCollection(),
+      student_profile_sentences: createStudentProfileSentences(),
+      student_rankings: createStudentRankingCollection(),
+      student_metrics: {},
     };
 
     const dictionaryId = dictionary?.id || "";
@@ -149,6 +164,8 @@
         dictionary,
         manualText,
         summary,
+        translator: translationProfile,
+        studentRequest,
       });
       mergeAnalytics(base, climbStats);
     } else if (dictionaryId === "cross_training") {
@@ -156,12 +173,31 @@
         students,
         entryKeys,
         dictionary,
+        translator: translationProfile,
+        studentRequest,
       });
       mergeAnalytics(base, crossStats);
+    }
+    if (!base.student_analysis && studentRequest && studentRequest.key && studentRequest.scope !== "cycle") {
+      const genericAnalysis = buildGenericStudentSessionAnalysis({
+        studentKey: studentRequest.key,
+        students,
+        classOverview: base.class_overview,
+        dictionary,
+        summary,
+      });
+      if (genericAnalysis) {
+        base.student_analysis = genericAnalysis;
+      }
     }
 
     const numericStats = analyzeNumericFields(entries, summary, dictionary);
     mergeAnalytics(base, numericStats);
+
+    if (!base.student_rankings?.below_attempt_average?.length) {
+      const fallbackRankings = buildGenericAttemptRankings(students, { includeBelowAverage: true });
+      base.student_rankings = mergeStudentRankings(base.student_rankings, fallbackRankings);
+    }
 
     finalizeAnalytics(base);
     return base;
@@ -208,7 +244,7 @@
     const cycleProfiles = buildCycleProfiles(normalizedSessions);
     const aggregatedSummary = aggregateCycleSummarySentences(normalizedSessions);
     const baseNextSteps = buildCycleNextSteps(normalizedSessions, trendInsights.trendNextSteps);
-    return {
+    const analysis = {
       overview: combineUniqueStrings([overviewBase, aggregatedSummary.overview], 6),
       progressions: combineUniqueStrings([trendInsights.progressions, aggregatedSummary.strengths], 5),
       stagnations: combineUniqueStrings([trendInsights.stagnations, aggregatedSummary.needs_work], 5),
@@ -345,7 +381,7 @@
     };
   }
 
-  function analyzeClimbTrack(entries, { students, entryKeys, dictionary, manualText }) {
+  function analyzeClimbTrack(entries, { students, entryKeys, dictionary, manualText, translator = null, studentRequest = null }) {
     const result = {
       class_overview: { summary: [], aggregate: {}, highlights: [], notes: [] },
       distributions: {},
@@ -587,11 +623,31 @@
     const climbProfiles = buildClimbTrackStudentProfiles(students);
     result.student_profiles = climbProfiles;
     result.student_profile_sentences = buildStudentProfileSentences(climbProfiles);
+    result.student_rankings = buildClimbStudentRankings({
+      students,
+      meanAttempts,
+    });
+    result.student_metrics = snapshotStudentMetrics(students);
+    if (studentRequest && studentRequest.key && studentRequest.scope !== "cycle") {
+      const studentAnalysis = buildClimbStudentSessionAnalysis({
+        studentKey: studentRequest.key,
+        students,
+        classOverview: result.class_overview,
+        dictionary,
+        summary,
+        stats: {
+          meanAttempts,
+          successShare,
+          successAttemptShare,
+        },
+      });
+      if (studentAnalysis) result.student_analysis = studentAnalysis;
+    }
 
     return result;
   }
 
-  function analyzeCrossTraining(entries, { students, entryKeys }) {
+  function analyzeCrossTraining(entries, { students, entryKeys, translator = null, studentRequest = null } = {}) {
     const result = {
       class_overview: { summary: [], aggregate: {}, highlights: [], notes: [] },
       distributions: {},
@@ -609,7 +665,7 @@
     const exerciseStats = new Map();
     entries.forEach((entry, index) => {
       const studentKey = entryKeys[index] || `row_${index}`;
-      const perExercise = extractCrossTrainingEntry(entry);
+      const perExercise = extractCrossTrainingEntry(entry, translator);
       Object.values(perExercise).forEach((sample) => {
         if (sample.planned == null && sample.realized == null) return;
         const stat = ensureCrossExerciseStat(exerciseStats, sample.meta);
@@ -788,6 +844,22 @@
     });
     result.student_profiles = crossProfiles;
     result.student_profile_sentences = buildStudentProfileSentences(crossProfiles);
+    result.student_rankings = buildCrossTrainingStudentRankings({
+      students,
+      stats: crossStudentStats,
+    });
+    result.student_metrics = snapshotStudentMetrics(students, { crossStats: crossStudentStats });
+    if (studentRequest && studentRequest.key && studentRequest.scope !== "cycle") {
+      const studentAnalysis = buildCrossStudentSessionAnalysis({
+        studentKey: studentRequest.key,
+        students,
+        classOverview: result.class_overview,
+        crossStats: crossStudentStats,
+        summaries,
+        dictionary,
+      });
+      if (studentAnalysis) result.student_analysis = studentAnalysis;
+    }
 
     return result;
   }
@@ -1148,13 +1220,13 @@
     return sentences;
   }
 
-  function extractCrossTrainingEntry(entry = {}) {
+  function extractCrossTrainingEntry(entry = {}, translator = null) {
     const perExercise = {};
     if (!entry || typeof entry !== "object") return perExercise;
     Object.keys(entry).forEach((key) => {
       if (!key || key.startsWith("__")) return;
       const normalized = normalizeKeyName(key);
-      const parsed = parseCrossTrainingField(normalized);
+      const parsed = parseCrossTrainingField(normalized, translator);
       if (!parsed) return;
       const numeric = coerceNumericValue(entry[key], { tolerateUnits: true });
       if (!Number.isFinite(numeric)) return;
@@ -1167,30 +1239,57 @@
             id: exerciseKey,
             exerciseId: parsed.exerciseId,
             variant: parsed.variant,
-            label: formatExerciseLabel(parsed.exerciseId, parsed.variant),
+            label: formatExerciseLabel(parsed.exerciseId, parsed.variant, translator),
           },
         };
       }
-      if (parsed.type === "p") perExercise[exerciseKey].planned = numeric;
-      else perExercise[exerciseKey].realized = numeric;
+      if (parsed.type === "p" || parsed.type === "planned") {
+        perExercise[exerciseKey].planned = numeric;
+      } else if (parsed.type === "r" || parsed.type === "realized") {
+        perExercise[exerciseKey].realized = numeric;
+      }
     });
     return perExercise;
   }
 
-  function parseCrossTrainingField(normalizedKey) {
+  function parseCrossTrainingField(normalizedKey, translator = null) {
     if (!normalizedKey) return null;
-    const match = normalizedKey.match(/(.+)_([pr])$/);
-    if (!match) return null;
-    const base = match[1];
-    const type = match[2];
-    const exerciseId = CROSS_EXERCISE_IDS.find(
-      (id) => base === id || base.startsWith(`${id}_`)
-    );
+    const suffixInfo = resolveCrossFieldSuffix(normalizedKey, translator);
+    if (!suffixInfo) return null;
+    const { base, type } = suffixInfo;
+    const exerciseId = translator
+      ? resolveTranslatorExerciseId(base, translator)
+      : CROSS_EXERCISE_IDS.find((id) => base === id || base.startsWith(`${id}_`));
     if (!exerciseId) return null;
     let variant = base.slice(exerciseId.length);
     variant = variant.replace(/^_/, "");
     if (!variant) variant = null;
     return { exerciseId, variant, type };
+  }
+
+  function resolveCrossFieldSuffix(normalizedKey, translator = null) {
+    if (translator?.fields) {
+      const entries = Object.values(translator.fields);
+      for (let index = 0; index < entries.length; index += 1) {
+        const field = entries[index];
+        if (!field?.suffix) continue;
+        if (!normalizedKey.endsWith(field.suffix)) continue;
+        const base = normalizedKey.slice(0, normalizedKey.length - field.suffix.length);
+        return { base, type: field.key };
+      }
+      return null;
+    }
+    const fallback = normalizedKey.match(/(.+)_([pr])$/);
+    if (!fallback) return null;
+    const type = fallback[2] === "p" ? "planned" : "realized";
+    return { base: fallback[1], type };
+  }
+
+  function resolveTranslatorExerciseId(base, translator = null) {
+    if (!translator?.columnMap) return null;
+    if (translator.columnMap[base]) return base;
+    const keys = Object.keys(translator.columnMap);
+    return keys.find((key) => base.startsWith(`${key}_`)) || null;
   }
 
   function buildCrossExerciseKey(exerciseId, variant) {
@@ -1386,8 +1485,11 @@
     return null;
   }
 
-  function formatExerciseLabel(exerciseId, variant) {
-    const base = CROSS_TRAINING_EXERCISES[exerciseId] || exerciseId.toUpperCase();
+  function formatExerciseLabel(exerciseId, variant, translator = null) {
+    const base =
+      translator?.columnMap?.[exerciseId]?.label ||
+      CROSS_TRAINING_EXERCISES[exerciseId] ||
+      exerciseId.toUpperCase();
     if (!variant) return base;
     const suffix = CROSS_TRAINING_VARIANT_LABELS[variant] || variant.toUpperCase();
     return `${base} (${suffix})`;
@@ -1419,6 +1521,56 @@
     };
   }
 
+  function createStudentRankingCollection() {
+    return {
+      strongest: [],
+      weakest: [],
+      below_attempt_average: [],
+    };
+  }
+
+  function snapshotStudentMetrics(students = new Map(), { crossStats = null } = {}) {
+    const metrics = {};
+    students.forEach((student, key) => {
+      if (!student || !key) return;
+      const attempts = Number(student.attempts || student.rawEntryCount || 0);
+      const successes = Number(student.successAttempts || 0);
+      metrics[key] = {
+        key,
+        student: {
+          prenom: student.prenom || "",
+          nom: student.nom || "",
+          classe: student.classe || "",
+        },
+        attempts,
+        successAttempts: successes,
+        successRate: attempts ? round(successes / attempts, 3) : null,
+        highestLevel: student.highestLevel || null,
+        highestLevelIndex: typeof student.highestLevelIndex === "number" ? student.highestLevelIndex : null,
+      };
+    });
+    if (crossStats instanceof Map) {
+      crossStats.forEach((stat, key) => {
+        const performance = evaluateCrossTrainingStudent(stat);
+        if (!performance) return;
+        metrics[key] = metrics[key] || {
+          key,
+          student: { prenom: "", nom: "", classe: "" },
+          attempts: performance.total || 0,
+        };
+        metrics[key].cross = {
+          total: performance.total,
+          above: performance.above,
+          below: performance.below,
+          score: performance.score,
+          aboveShare: performance.aboveShare,
+          belowShare: performance.belowShare,
+        };
+      });
+    }
+    return metrics;
+  }
+
   function createStudentProfileSentences() {
     return {
       to_support: [],
@@ -1432,6 +1584,19 @@
     STUDENT_PROFILE_KEYS.forEach((key) => {
       const combined = [...(base?.[key] || []), ...(addition?.[key] || [])];
       merged[key] = limitProfileEntries(dedupeProfiles(combined));
+    });
+    return merged;
+  }
+
+  function mergeStudentRankings(
+    base = createStudentRankingCollection(),
+    addition = createStudentRankingCollection()
+  ) {
+    const merged = createStudentRankingCollection();
+    STUDENT_RANKING_KEYS.forEach((key) => {
+      const existing = Array.isArray(base?.[key]) ? base[key] : [];
+      const incoming = Array.isArray(addition?.[key]) ? addition[key] : [];
+      merged[key] = limitRankingEntries([...existing, ...incoming], STUDENT_RANKING_LIMIT);
     });
     return merged;
   }
@@ -1474,6 +1639,29 @@
   function limitProfileEntries(list = [], max = 5) {
     if (!Array.isArray(list)) return [];
     return list.slice(0, max);
+  }
+
+  function limitRankingEntries(list = [], max = STUDENT_RANKING_LIMIT) {
+    if (!Array.isArray(list)) return [];
+    const seen = new Set();
+    const clean = [];
+    list.forEach((entry) => {
+      if (!entry || !entry.student) return;
+      const signature = `${entry.student}|${entry.reason || ""}`;
+      if (seen.has(signature)) return;
+      seen.add(signature);
+      clean.push(entry);
+    });
+    return clean.slice(0, max);
+  }
+
+  function buildRankingList(candidates = [], max = STUDENT_RANKING_LIMIT) {
+    if (!Array.isArray(candidates) || !candidates.length) return [];
+    const ordered = candidates
+      .filter((candidate) => candidate && candidate.entry && candidate.entry.student)
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      .map((candidate) => candidate.entry);
+    return limitRankingEntries(ordered, max);
   }
 
   function buildStudentProfileSentences(profiles = createStudentProfileCollection()) {
@@ -1596,6 +1784,10 @@
       normalized.student_profile_sentences ||
       analytics?.student_profile_sentences ||
       buildStudentProfileSentences(normalized.student_profiles);
+    normalized.student_metrics =
+      normalized.student_metrics || analytics?.student_metrics || {};
+    normalized.student_rankings =
+      normalized.student_rankings || analytics?.student_rankings || createStudentRankingCollection();
     normalized.app_id = normalized.app_id || normalized.appId || normalized.dictionary?.id || `source_${index + 1}`;
     normalized.app_label =
       normalized.app_label ||
@@ -2197,6 +2389,10 @@
       normalized.student_profile_sentences ||
       analytics.student_profile_sentences ||
       buildStudentProfileSentences(normalized.student_profiles);
+    normalized.student_metrics =
+      normalized.student_metrics || analytics.student_metrics || {};
+    normalized.student_rankings =
+      normalized.student_rankings || analytics.student_rankings || createStudentRankingCollection();
     normalized.session_name = normalized.session_name || normalized.sessionName || normalized.name || `Séance ${index + 1}`;
     normalized.session_date = normalized.session_date || normalized.updatedAt || normalized.createdAt || null;
     normalized.session_index = normalized.session_index || index + 1;
@@ -2264,6 +2460,71 @@
     profiles.strengths = limitProfileEntries(sortProfiles(strengths).map((entry) => entry.profile), 2);
     profiles.to_confirm = limitProfileEntries(sortProfiles(confirm).map((entry) => entry.profile), PROFILE_MAX_CONFIRM_ENTRIES);
     return profiles;
+  }
+
+  function buildClimbStudentRankings({ students = new Map(), meanAttempts = 0 } = {}) {
+    const rankings = createStudentRankingCollection();
+    if (!students?.size || students.size < MIN_STUDENT_RANKING_STUDENTS) return rankings;
+    const strong = [];
+    const weak = [];
+    const low = [];
+    students.forEach((student) => {
+      const name = formatStudentName(student);
+      if (!name) return;
+      const attempts = student.attempts || 0;
+      if (!attempts) return;
+      const successes = student.successAttempts || 0;
+      const successRate = attempts ? successes / attempts : 0;
+      const highestLevel = student.highestLevel || null;
+      const hasHighLevel = highestLevel ? isHighClimbLevel(highestLevel) : false;
+      if (
+        attempts >= 2 &&
+        (successRate >= 0.7 || (hasHighLevel && successes >= 1))
+      ) {
+        const reason =
+          successRate >= 0.7
+            ? `réussite régulière (${successes}/${attempts} voies)`
+            : `niveau atteint ${highestLevel}`;
+        strong.push({
+          score: successRate + (hasHighLevel ? 0.2 : 0),
+          entry: {
+            student: name,
+            metric: round(successRate, 2),
+            attempts,
+            reason,
+          },
+        });
+      }
+      const failed = Math.max(attempts - successes, 0);
+      const failureRate = attempts ? failed / attempts : 1;
+      if (attempts >= 2 && (failureRate >= 0.6 || successes === 0)) {
+        const failureDetail =
+          successes === 0 ? "aucune voie enchaînée" : `${failed}/${attempts} voies non enchaînées`;
+        weak.push({
+          score: failureRate,
+          entry: {
+            student: name,
+            metric: round(failureRate, 2),
+            attempts,
+            reason: `difficultés persistantes (${failureDetail})`,
+          },
+        });
+      }
+      if (meanAttempts >= 2 && attempts && attempts < meanAttempts - 0.25) {
+        low.push({
+          score: meanAttempts - attempts,
+          entry: {
+            student: name,
+            attempts,
+            reason: `${attempts} tentative(s) vs moyenne ${round(meanAttempts, 1)}`,
+          },
+        });
+      }
+    });
+    rankings.strongest = buildRankingList(strong);
+    rankings.weakest = buildRankingList(weak);
+    rankings.below_attempt_average = buildRankingList(low);
+    return rankings;
   }
 
   function evaluateClimbStudentPerformance(student = {}) {
@@ -2438,6 +2699,42 @@
     return student.prenom || student.nom || "";
   }
 
+  function buildGenericAttemptRankings(
+    students = new Map(),
+    { includeBelowAverage = true } = {}
+  ) {
+    const rankings = createStudentRankingCollection();
+    if (!includeBelowAverage || !students?.size || students.size < MIN_STUDENT_RANKING_STUDENTS) return rankings;
+    const counts = [];
+    students.forEach((student) => {
+      const attempts = student.attempts || student.rawEntryCount || 0;
+      counts.push({ student, attempts });
+    });
+    if (!counts.length) return rankings;
+    const mean =
+      counts.reduce((sum, entry) => sum + (entry.attempts || 0), 0) / Math.max(counts.length, 1);
+    if (!mean || mean < 1.5) return rankings;
+    const low = counts
+      .map(({ student, attempts }) => {
+        if (!attempts) return null;
+        if (attempts >= mean - 0.25) return null;
+        const name = formatStudentName(student);
+        if (!name) return null;
+        return {
+          score: mean - attempts,
+          entry: {
+            student: name,
+            attempts,
+            reason: `${attempts} enregistrement(s) < moyenne ${round(mean, 1)}`,
+          },
+        };
+      })
+      .filter(Boolean);
+    if (!low.length) return rankings;
+    rankings.below_attempt_average = buildRankingList(low);
+    return rankings;
+  }
+
   function buildCrossTrainingStudentProfiles({ students = new Map(), stats = new Map() } = {}) {
     const profiles = createStudentProfileCollection();
     const support = [];
@@ -2492,6 +2789,604 @@
     profiles.strengths = limitProfileEntries(sortProfiles(strengths).map((entry) => entry.profile), 2);
     profiles.to_confirm = limitProfileEntries(sortProfiles(confirm).map((entry) => entry.profile), PROFILE_MAX_CONFIRM_ENTRIES);
     return profiles;
+  }
+
+  function buildCrossTrainingStudentRankings({ students = new Map(), stats = new Map() } = {}) {
+    const rankings = createStudentRankingCollection();
+    if (!stats?.size || stats.size < MIN_STUDENT_RANKING_STUDENTS) return rankings;
+    const records = [];
+    stats.forEach((record, key) => {
+      const performance = evaluateCrossTrainingStudent(record);
+      if (!performance) return;
+      const student = students.get(key);
+      const name = formatStudentName(student || {});
+      if (!name) return;
+      records.push({ name, performance });
+    });
+    if (records.length < MIN_STUDENT_RANKING_STUDENTS) return rankings;
+    const meanAttempts =
+      records.reduce((sum, entry) => sum + (entry.performance.total || 0), 0) / Math.max(records.length, 1);
+    const strong = [];
+    const weak = [];
+    const low = [];
+    records.forEach(({ name, performance }) => {
+      const total = performance.total || 0;
+      if (!total) return;
+      const successShare = performance.aboveShare || 0;
+      const failureShare = performance.belowShare || 0;
+      if (total >= CROSS_MIN_EXERCISES_FOR_STRONG_PROFILE && successShare >= 0.6) {
+        strong.push({
+          score: successShare + (performance.score || 0),
+          entry: {
+            student: name,
+            metric: round(successShare, 2),
+            attempts: total,
+            reason: `réussite régulière (${toPercent(successShare)}% des ateliers au-dessus du prévu)`,
+          },
+        });
+      }
+      if (
+        total >= CROSS_MIN_EXERCISES_FOR_STRONG_PROFILE &&
+        (failureShare >= 0.5 || (performance.score || 0) <= -2)
+      ) {
+        const reason =
+          failureShare >= 0.5
+            ? `écarts sous l'objectif (${toPercent(failureShare)}% des ateliers)`
+            : "peu de réussites observées";
+        weak.push({
+          score: failureShare || Math.abs(performance.score || 0),
+          entry: {
+            student: name,
+            metric: round(failureShare || Math.abs(performance.score || 0), 2),
+            attempts: total,
+            reason,
+          },
+        });
+      }
+    });
+    if (meanAttempts >= 2) {
+      records.forEach(({ name, performance }) => {
+        const total = performance.total || 0;
+        if (total && total < meanAttempts - 0.25) {
+          low.push({
+            score: meanAttempts - total,
+            entry: {
+              student: name,
+              attempts: total,
+              reason: `${total} atelier(s) renseigné(s) < moyenne ${round(meanAttempts, 1)}`,
+            },
+          });
+        }
+      });
+    }
+    rankings.strongest = buildRankingList(strong);
+    rankings.weakest = buildRankingList(weak);
+    rankings.below_attempt_average = buildRankingList(low);
+    return rankings;
+  }
+
+  function buildClimbStudentSessionAnalysis({ studentKey, students = new Map(), classOverview = {}, dictionary = null, summary = {}, stats = {} }) {
+    if (!studentKey || !students.has(studentKey)) return null;
+    const student = students.get(studentKey);
+    const attempts = student.attempts || student.rawEntryCount || 0;
+    if (!attempts) return null;
+    const classMean = classOverview?.aggregate?.mean_attempts_per_student || 0;
+    const successAttempts = student.successAttempts || 0;
+    const successRate = attempts ? successAttempts / attempts : null;
+    const positioning = classifyRelativePosition(
+      Number.isFinite(successRate) ? successRate : attempts,
+      Number.isFinite(successRate) && Number.isFinite(stats.successAttemptShare || null)
+        ? stats.successAttemptShare
+        : classMean
+    );
+    const strengths = [];
+    const focus = [];
+    if (Number.isFinite(successRate)) {
+      if (successRate >= 0.7) strengths.push("réussite régulière sur les voies tentées");
+      if (successRate <= 0.4) focus.push("taux de réussite à consolider");
+    }
+    if (student.highestLevel) strengths.push(`niveau atteint : ${student.highestLevel}`);
+    if (classMean) {
+      if (attempts >= classMean + 0.5) strengths.push("engagement supérieur à la moyenne de classe");
+      if (attempts + 0.5 <= classMean) focus.push("volume de pratique inférieur à la moyenne");
+    }
+    const nextSteps =
+      focus.length > 0
+        ? [
+            "Programmer un essai guidé sur les voies ciblées.",
+            "Fixer un objectif simple pour rejoindre la moyenne de classe.",
+          ]
+        : ["Proposer un défi d'un niveau supérieur pour maintenir la progression.", "Valoriser les réussites observées."];
+    const comparisonNotes = [];
+    if (Number.isFinite(successRate) && Number.isFinite(stats.successAttemptShare)) {
+      comparisonNotes.push(`Réussite ${toPercent(successRate)}% vs classe ${toPercent(stats.successAttemptShare)}%.`);
+    }
+    if (classMean) comparisonNotes.push(`Volume ${attempts} vs moyenne ${round(classMean, 1)}.`);
+    return composeStudentAnalysisPayload({
+      studentKey,
+      studentInfo: student,
+      activityLabel: dictionary?.label || summary?.meta?.activityName || "",
+      dictionaryId: dictionary?.id || "",
+      scope: "session",
+      attempts,
+      classAttempts: classMean,
+      performance:
+        successRate != null
+          ? { label: "Taux de réussite", value: round(successRate, 2), unit: "ratio" }
+          : null,
+      classPerformance:
+        successRate != null && Number.isFinite(stats.successAttemptShare) ? round(stats.successAttemptShare, 2) : null,
+      positioning,
+      trend: "stable",
+      strengths,
+      focus,
+      nextSteps,
+      comparisonNotes,
+    });
+  }
+
+  function buildCrossStudentSessionAnalysis({
+    studentKey,
+    students = new Map(),
+    classOverview = {},
+    crossStats = new Map(),
+    summaries = [],
+    dictionary = null,
+  }) {
+    if (!studentKey) return null;
+    const student = students.get(studentKey);
+    const performance = crossStats.get(studentKey) ? evaluateCrossTrainingStudent(crossStats.get(studentKey)) : null;
+    const attempts = performance?.total || student?.rawEntryCount || 0;
+    if (!attempts) return null;
+    const classMean = classOverview?.aggregate?.mean_entries_per_student || 0;
+    const successShare = performance?.aboveShare;
+    const classSuccess =
+      summaries && summaries.length
+        ? summaries.reduce((sum, entry) => sum + (entry.shareAbove || 0), 0) / summaries.length
+        : null;
+    const positioning = classifyRelativePosition(
+      Number.isFinite(successShare) ? successShare : attempts,
+      Number.isFinite(successShare) && Number.isFinite(classSuccess) ? classSuccess : classMean
+    );
+    const strengths = [];
+    const focus = [];
+    if (Number.isFinite(successShare)) {
+      if (successShare >= 0.6) strengths.push("réalise la plupart des ateliers conformément au prévu");
+      if (successShare <= 0.4) focus.push("écarts importants entre prévu et réalisé");
+    }
+    if (performance?.score <= -2) focus.push("écarts sous le plan à résorber sur plusieurs ateliers");
+    if (!Number.isFinite(successShare)) {
+      if (classMean && attempts >= classMean + 0.5) strengths.push("engagement supérieur à la moyenne de classe");
+      if (classMean && attempts + 0.5 <= classMean) focus.push("volume d'ateliers inférieur à la moyenne");
+    }
+    const nextSteps =
+      focus.length > 0
+        ? ["Revoir le dosage prévu/réalisé sur un atelier clé.", "Prévoir un retour intermédiaire pour ajuster l'effort."]
+        : ["Maintenir la régularité observée tout en variant un atelier plus exigeant.", "Valoriser la gestion d'effort actuelle."];
+    const comparisonNotes = [];
+    if (Number.isFinite(successShare) && Number.isFinite(classSuccess)) {
+      comparisonNotes.push(
+        `Ateliers au-dessus du plan : ${toPercent(successShare)}% vs classe ${toPercent(classSuccess)}%.`
+      );
+    }
+    if (classMean) comparisonNotes.push(`Volume ${attempts} ateliers vs moyenne ${round(classMean, 1)}.`);
+    return composeStudentAnalysisPayload({
+      studentKey,
+      studentInfo: student || { prenom: "", nom: "", classe: "" },
+      activityLabel: dictionary?.label || "",
+      dictionaryId: dictionary?.id || "",
+      scope: "session",
+      attempts,
+      classAttempts: classMean,
+      performance:
+        Number.isFinite(successShare)
+          ? { label: "Ateliers au-dessus du plan", value: round(successShare, 2), unit: "ratio" }
+          : null,
+      classPerformance: Number.isFinite(classSuccess) ? round(classSuccess, 2) : null,
+      positioning,
+      trend: "stable",
+      strengths,
+      focus,
+      nextSteps,
+      comparisonNotes,
+    });
+  }
+
+  function buildGenericStudentSessionAnalysis({
+    studentKey,
+    students = new Map(),
+    classOverview = {},
+    dictionary = null,
+    summary = {},
+  }) {
+    if (!studentKey || !students.has(studentKey)) return null;
+    const student = students.get(studentKey);
+    const attempts = student.attempts || student.rawEntryCount || 0;
+    if (!attempts) return null;
+    const classMean =
+      classOverview?.aggregate?.mean_entries_per_student ||
+      classOverview?.aggregate?.mean_attempts_per_student ||
+      0;
+    const positioning = classifyRelativePosition(attempts, classMean);
+    const strengths = [];
+    const focus = [];
+    if (classMean) {
+      if (attempts >= classMean + 0.5) strengths.push("engagement supérieur à la moyenne de classe");
+      if (attempts + 0.5 <= classMean) focus.push("volume de pratique inférieur à la moyenne");
+    }
+    const nextSteps =
+      focus.length > 0
+        ? ["Fixer un objectif simple pour rejoindre la moyenne de classe.", "Prévoir un accompagnement sur un atelier clé."]
+        : ["Poursuivre la dynamique observée sur cette séance.", "Varier les situations pour maintenir la motivation."];
+    const comparisonNotes = [];
+    if (classMean) comparisonNotes.push(`Volume ${attempts} vs moyenne ${round(classMean, 1)}.`);
+    return composeStudentAnalysisPayload({
+      studentKey,
+      studentInfo: student,
+      activityLabel: dictionary?.label || summary?.meta?.activityName || "",
+      dictionaryId: dictionary?.id || "",
+      scope: "session",
+      attempts,
+      classAttempts: classMean || null,
+      performance: null,
+      classPerformance: null,
+      positioning,
+      trend: "stable",
+      strengths,
+      focus,
+      nextSteps,
+      comparisonNotes,
+    });
+  }
+
+  function buildStudentCycleAnalysis({ sessions = [], studentKey, dictionary = null } = {}) {
+    if (!studentKey || !Array.isArray(sessions) || sessions.length < 2) return null;
+    const history = [];
+    let studentInfo = null;
+    let totalAttempts = 0;
+    let attemptSamples = 0;
+    let classAttemptSum = 0;
+    let classAttemptSamples = 0;
+    let successSum = 0;
+    let successSamples = 0;
+    let classSuccessSum = 0;
+    let classSuccessSamples = 0;
+    let crossSum = 0;
+    let crossSamples = 0;
+    let classCrossSum = 0;
+    let classCrossSamples = 0;
+    let firstSuccess = null;
+    let lastSuccess = null;
+    let firstAttempts = null;
+    let lastAttempts = null;
+    let firstCross = null;
+    let lastCross = null;
+    sessions.forEach((session, index) => {
+      const metrics = session?.student_metrics?.[studentKey];
+      if (!metrics) return;
+      studentInfo = studentInfo || metrics.student || null;
+      const attempts = Number(metrics.attempts || metrics.rawEntryCount || 0) || 0;
+      const classAttempts = extractClassAttemptMean(session);
+      const successRate = Number.isFinite(metrics.successRate) ? metrics.successRate : null;
+      const classSuccess = extractClassSuccessRate(session);
+      const crossShare =
+        metrics.cross && Number.isFinite(metrics.cross.aboveShare) ? metrics.cross.aboveShare : null;
+      const classCross = extractClassCrossShare(session);
+      if (attempts) {
+        totalAttempts += attempts;
+        attemptSamples += 1;
+        if (firstAttempts == null) firstAttempts = attempts;
+        lastAttempts = attempts;
+      }
+      if (Number.isFinite(classAttempts)) {
+        classAttemptSum += classAttempts;
+        classAttemptSamples += 1;
+      }
+      if (Number.isFinite(successRate)) {
+        successSum += successRate;
+        successSamples += 1;
+        if (firstSuccess == null) firstSuccess = successRate;
+        lastSuccess = successRate;
+      }
+      if (Number.isFinite(classSuccess)) {
+        classSuccessSum += classSuccess;
+        classSuccessSamples += 1;
+      }
+      if (Number.isFinite(crossShare)) {
+        crossSum += crossShare;
+        crossSamples += 1;
+        if (firstCross == null) firstCross = crossShare;
+        lastCross = crossShare;
+      }
+      if (Number.isFinite(classCross)) {
+        classCrossSum += classCross;
+        classCrossSamples += 1;
+      }
+      history.push(
+        formatStudentHistoryEntry({
+          session,
+          attempts,
+          classAttempts,
+          successRate,
+          classSuccess,
+          crossShare,
+          classCross,
+          order: session?.session_index || session?.index || index + 1,
+        })
+      );
+    });
+    if (!history.length) return null;
+    history.sort((a, b) => a.order - b.order);
+    const orderedHistory = history.map((entry) => {
+      if (!entry || typeof entry !== "object") return entry;
+      const clone = { ...entry };
+      delete clone.order;
+      return clone;
+    });
+    const meanAttempts = attemptSamples ? totalAttempts / attemptSamples : null;
+    const classMeanAttempts = classAttemptSamples ? classAttemptSum / classAttemptSamples : null;
+    const meanSuccess = successSamples ? successSum / successSamples : null;
+    const classMeanSuccess = classSuccessSamples ? classSuccessSum / classSuccessSamples : null;
+    const meanCross = crossSamples ? crossSum / crossSamples : null;
+    const classMeanCross = classCrossSamples ? classCrossSum / classCrossSamples : null;
+    let performanceMetric = null;
+    if (Number.isFinite(meanCross)) {
+      performanceMetric = {
+        label: "Ateliers au-dessus du plan",
+        value: meanCross,
+        classValue: Number.isFinite(classMeanCross) ? classMeanCross : null,
+        unit: "ratio",
+      };
+    } else if (Number.isFinite(meanSuccess)) {
+      performanceMetric = {
+        label: "Taux de réussite",
+        value: meanSuccess,
+        classValue: Number.isFinite(classMeanSuccess) ? classMeanSuccess : null,
+        unit: "ratio",
+      };
+    }
+    const positioning = classifyRelativePosition(
+      performanceMetric ? performanceMetric.value : meanAttempts,
+      performanceMetric ? performanceMetric.classValue : classMeanAttempts
+    );
+    const primaryDelta =
+      Number.isFinite(lastCross) && Number.isFinite(firstCross)
+        ? lastCross - firstCross
+        : Number.isFinite(lastSuccess) && Number.isFinite(firstSuccess)
+        ? lastSuccess - firstSuccess
+        : null;
+    const secondaryDelta =
+      Number.isFinite(lastAttempts) && Number.isFinite(firstAttempts) ? lastAttempts - firstAttempts : null;
+    const trend = classifyTrend(primaryDelta, secondaryDelta);
+    const strengths = [];
+    const focus = [];
+    if (performanceMetric && Number.isFinite(performanceMetric.value) && Number.isFinite(performanceMetric.classValue)) {
+      const diff = performanceMetric.value - performanceMetric.classValue;
+      if (diff >= 0.05) {
+        const detail =
+          performanceMetric.unit === "ratio"
+            ? `${toPercent(performanceMetric.value)}% vs classe ${toPercent(performanceMetric.classValue)}%`
+            : `${round(performanceMetric.value, 2)} vs classe ${round(performanceMetric.classValue, 2)}`;
+        strengths.push(`${performanceMetric.label.toLowerCase()} supérieur (${detail})`);
+      }
+      if (diff <= -0.05) {
+        const detail =
+          performanceMetric.unit === "ratio"
+            ? `${toPercent(performanceMetric.value)}% vs classe ${toPercent(performanceMetric.classValue)}%`
+            : `${round(performanceMetric.value, 2)} vs classe ${round(performanceMetric.classValue, 2)}`;
+        focus.push(`${performanceMetric.label.toLowerCase()} sous la moyenne (${detail})`);
+      }
+    }
+    if (Number.isFinite(meanAttempts) && Number.isFinite(classMeanAttempts)) {
+      const delta = meanAttempts - classMeanAttempts;
+      if (delta >= 0.5) {
+        strengths.push("volume de tentatives supérieur à la moyenne de classe");
+      } else if (delta <= -0.5) {
+        focus.push("volume de tentatives inférieur à la moyenne de classe");
+      }
+    }
+    if (trend === "progression") strengths.push("progression observable sur l'ensemble du cycle");
+    if (trend === "soutien") focus.push("tendance en retrait à accompagner lors des prochaines séances");
+    const nextSteps =
+      focus.length > 0
+        ? [
+            "Prévoir un point d'étape individuel sur la prochaine séance.",
+            "Fixer un objectif réaliste pour rejoindre la moyenne de classe.",
+          ]
+        : [
+            "Valoriser les réussites observées et proposer un défi complémentaire.",
+            "Maintenir un relevé régulier pour confirmer la progression.",
+          ];
+    const comparisonNotes = [];
+    if (Number.isFinite(meanAttempts) && Number.isFinite(classMeanAttempts)) {
+      comparisonNotes.push(
+        `Volume moyen : ${round(meanAttempts, 1)} essais vs classe ${round(classMeanAttempts, 1)}.`
+      );
+    }
+    if (performanceMetric && Number.isFinite(performanceMetric.classValue)) {
+      const formattedStudent =
+        performanceMetric.unit === "ratio"
+          ? `${toPercent(performanceMetric.value)}%`
+          : `${round(performanceMetric.value, 2)}`;
+      const formattedClass =
+        performanceMetric.unit === "ratio"
+          ? `${toPercent(performanceMetric.classValue)}%`
+          : `${round(performanceMetric.classValue, 2)}`;
+      comparisonNotes.push(`${performanceMetric.label} : ${formattedStudent} vs classe ${formattedClass}.`);
+    }
+    const activityLabel =
+      dictionary?.label ||
+      sessions[0]?.dictionary?.label ||
+      sessions[0]?.meta?.activityName ||
+      "Activité";
+    const dictionaryId = dictionary?.id || sessions[0]?.dictionary?.id || "";
+    return composeStudentAnalysisPayload({
+      studentKey,
+      studentInfo,
+      activityLabel,
+      dictionaryId,
+      scope: "cycle",
+      attempts: {
+        student: Number.isFinite(meanAttempts) ? meanAttempts : null,
+        class_mean: Number.isFinite(classMeanAttempts) ? classMeanAttempts : null,
+      },
+      classAttempts: Number.isFinite(classMeanAttempts) ? classMeanAttempts : null,
+      performance: performanceMetric
+        ? {
+            label: performanceMetric.label,
+            value: Number.isFinite(performanceMetric.value) ? round(performanceMetric.value, 2) : null,
+            unit: performanceMetric.unit,
+          }
+        : null,
+      classPerformance:
+        performanceMetric && Number.isFinite(performanceMetric.classValue)
+          ? round(performanceMetric.classValue, 2)
+          : null,
+      positioning,
+      trend,
+      strengths,
+      focus,
+      nextSteps,
+      comparisonNotes,
+      history: orderedHistory.slice(0, STUDENT_HISTORY_LIMIT),
+    });
+  }
+
+  function formatStudentHistoryEntry({
+    session = {},
+    attempts = null,
+    classAttempts = null,
+    successRate = null,
+    classSuccess = null,
+    crossShare = null,
+    classCross = null,
+    order = 0,
+  } = {}) {
+    return {
+      order,
+      session_label: session?.session_name || `Séance ${order}`,
+      session_date: session?.session_date || null,
+      attempts: Number.isFinite(attempts) ? round(attempts, 2) : null,
+      class_attempts: Number.isFinite(classAttempts) ? round(classAttempts, 2) : null,
+      success_rate: Number.isFinite(successRate) ? round(successRate, 2) : null,
+      class_success_rate: Number.isFinite(classSuccess) ? round(classSuccess, 2) : null,
+      cross_above_share: Number.isFinite(crossShare) ? round(crossShare, 2) : null,
+      class_cross_above_share: Number.isFinite(classCross) ? round(classCross, 2) : null,
+    };
+  }
+
+  function composeStudentAnalysisPayload({
+    studentKey,
+    studentInfo = {},
+    activityLabel = "",
+    dictionaryId = "",
+    scope = "session",
+    attempts = null,
+    classAttempts = null,
+    performance = null,
+    classPerformance = null,
+    positioning = "near",
+    trend = "stable",
+    strengths = [],
+    focus = [],
+    nextSteps = [],
+    comparisonNotes = [],
+    history = [],
+  }) {
+    if (!studentKey) return null;
+    const strengthList = Array.from(new Set((strengths || []).filter(Boolean))).slice(0, 4);
+    const focusList = Array.from(new Set((focus || []).filter(Boolean))).slice(0, 4);
+    const nextList = Array.from(new Set((nextSteps || []).filter(Boolean))).slice(0, 4);
+    return {
+      student_key: studentKey,
+      student_label: buildStudentDisplayName(studentInfo) || "Élève",
+      classe: studentInfo?.classe || "",
+      activity_label: activityLabel || "",
+      dictionary_id: dictionaryId || "",
+      scope,
+      attempts: {
+        student: attempts != null ? round(attempts, 2) : null,
+        class_mean: classAttempts != null ? round(classAttempts, 2) : null,
+      },
+      performance: performance
+        ? {
+            label: performance.label || "",
+            student_value: performance.value != null ? performance.value : null,
+            class_value: classPerformance != null ? classPerformance : null,
+            unit: performance.unit || null,
+          }
+        : null,
+      positioning,
+      trend,
+      strengths: strengthList,
+      focus: focusList,
+      next_steps: nextList,
+      comparisons: comparisonNotes.slice(0, 3),
+      history: Array.isArray(history) ? history.slice(0, STUDENT_HISTORY_LIMIT) : [],
+    };
+  }
+
+  function extractClassAttemptMean(session = {}) {
+    const aggregate = session?.class_analytics?.class_overview?.aggregate || {};
+    if (Number.isFinite(aggregate.mean_attempts_per_student)) return aggregate.mean_attempts_per_student;
+    if (Number.isFinite(aggregate.mean_entries_per_student)) return aggregate.mean_entries_per_student;
+    const measures = session?.class_analytics?.measures || {};
+    if (Number.isFinite(measures.voies?.mean_per_student)) return measures.voies.mean_per_student;
+    return null;
+  }
+
+  function extractClassSuccessRate(session = {}) {
+    return averageMetricValue(session?.student_metrics, (entry) =>
+      Number.isFinite(entry?.successRate) ? entry.successRate : null
+    );
+  }
+
+  function extractClassCrossShare(session = {}) {
+    return averageMetricValue(session?.student_metrics, (entry) =>
+      Number.isFinite(entry?.cross?.aboveShare) ? entry.cross.aboveShare : null
+    );
+  }
+
+  function averageMetricValue(metrics, pickValue) {
+    if (!metrics || typeof pickValue !== "function") return null;
+    const values = [];
+    if (metrics instanceof Map) {
+      metrics.forEach((entry) => {
+        const value = pickValue(entry);
+        if (Number.isFinite(value)) values.push(value);
+      });
+    } else {
+      Object.values(metrics).forEach((entry) => {
+        const value = pickValue(entry);
+        if (Number.isFinite(value)) values.push(value);
+      });
+    }
+    if (!values.length) return null;
+    const sum = values.reduce((acc, value) => acc + value, 0);
+    return sum / values.length;
+  }
+
+  function buildStudentDisplayName(student = {}) {
+    const parts = [student?.prenom || "", student?.nom || ""].filter(Boolean);
+    return parts.join(" ").trim();
+  }
+
+  function classifyRelativePosition(studentValue, classMean, tolerance = 0.15) {
+    if (!Number.isFinite(studentValue) || !Number.isFinite(classMean) || !classMean) return "near";
+    const ratio = studentValue / classMean;
+    if (ratio >= 1 + tolerance) return "above";
+    if (ratio <= 1 - tolerance) return "below";
+    return "near";
+  }
+
+  function classifyTrend(primaryDelta, secondaryDelta = 0) {
+    if (Number.isFinite(primaryDelta) && Math.abs(primaryDelta) >= 0.08) {
+      return primaryDelta > 0 ? "progression" : "soutien";
+    }
+    if (Number.isFinite(secondaryDelta) && Math.abs(secondaryDelta) >= 1) {
+      return secondaryDelta > 0 ? "progression" : "soutien";
+    }
+    return "stable";
   }
 
   function evaluateCrossTrainingStudent(record = {}) {
@@ -2763,6 +3658,15 @@
         addition.student_profile_sentences
       );
     }
+    if (addition.student_rankings) {
+      target.student_rankings = mergeStudentRankings(target.student_rankings, addition.student_rankings);
+    }
+    if (addition.student_metrics) {
+      target.student_metrics = { ...(target.student_metrics || {}), ...(addition.student_metrics || {}) };
+    }
+    if (addition.student_analysis && !target.student_analysis) {
+      target.student_analysis = addition.student_analysis;
+    }
   }
 
   function mergeDataQuality(base, addition) {
@@ -2830,6 +3734,11 @@
     if (base.student_profile_sentences) {
       base.student_profile_sentences = dedupeSentenceCollection(base.student_profile_sentences);
     }
+    if (base.student_rankings) {
+      STUDENT_RANKING_KEYS.forEach((key) => {
+        base.student_rankings[key] = limitRankingEntries(base.student_rankings[key], STUDENT_RANKING_LIMIT);
+      });
+    }
   }
 
   function normalizeKeyName(key) {
@@ -2837,6 +3746,18 @@
       .trim()
       .toLowerCase()
       .replace(/\s+/g, "_");
+  }
+
+  function fetchTranslationProfile(dictionary) {
+    if (!dictionary) return null;
+    if (typeof window === "undefined") return null;
+    const api = window.ScanProfAIDictionaries;
+    if (!api || typeof api.getTranslationProfile !== "function") return null;
+    try {
+      return api.getTranslationProfile(dictionary.id || dictionary.label || "");
+    } catch {
+      return null;
+    }
   }
 
   function safeString(value) {
@@ -2963,5 +3884,6 @@
     analyze,
     analyzeSessionBundle,
     analyzeCycleBundle,
+    buildStudentCycleAnalysis,
   };
 })();

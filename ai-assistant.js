@@ -74,6 +74,12 @@
     strengths: "Point d'appui",
     to_confirm: "À confirmer",
   };
+  const STUDENT_RANKING_KEYS = ["strongest", "weakest", "below_attempt_average"];
+  const STUDENT_RANKING_LABELS = {
+    strongest: "En réussite",
+    weakest: "À soutenir davantage",
+    below_attempt_average: "Volume à relancer",
+  };
   const CYCLE_PROFILE_CATEGORY_LABELS = {
     progressing: "Progression",
     stalled: "À surveiller",
@@ -129,6 +135,7 @@
   let lastActivityName = "";
   let lastCycleDiagnostics = { totalCandidates: 0, retained: 0, rejections: [] };
   let cycleRejectionLog = [];
+  let studentDirectory = new Map();
 
   document.addEventListener("DOMContentLoaded", initAssistant);
 
@@ -529,6 +536,10 @@
       summaryClass: document.getElementById("ai-summary-class"),
       summaryCount: document.getElementById("ai-summary-count"),
       summaryTypes: document.getElementById("ai-summary-types"),
+      studentSelect: document.getElementById("ai-student-select"),
+      studentSessionBtn: document.getElementById("ai-student-session-btn"),
+      studentCycleBtn: document.getElementById("ai-student-cycle-btn"),
+      studentStatus: document.getElementById("ai-student-status"),
       modeIndicator: document.getElementById("ai-mode-indicator"),
       dictionaryIndicator: document.getElementById("ai-dictionary-indicator"),
       cycleWarning: document.getElementById("ai-cycle-warning"),
@@ -607,6 +618,9 @@
         if (event.target === refs.modal) closeModal();
       });
     }
+    refs.studentSessionBtn?.addEventListener("click", () => handleStudentAnalysis("session"));
+    refs.studentCycleBtn?.addEventListener("click", () => handleStudentAnalysis("cycle"));
+    refs.studentSelect?.addEventListener("change", () => setStatus(refs.studentStatus, "", "info"));
   }
 
   function setupDictionaryHint() {
@@ -1057,6 +1071,7 @@
         summary_sentences: classAnalytics?.summary_sentences || null,
         student_profiles: studentProfiles,
         student_profile_sentences: studentProfileSentences,
+        student_analysis: classAnalytics?.student_analysis || null,
         class_analytics: classAnalytics,
         session_bundle: sessionBundle,
         cycle_bundle: cycleBundle,
@@ -1630,8 +1645,9 @@
       });
     }
     const studentProfileSentences = currentContext?.classAnalytics?.student_profile_sentences;
-    if (studentProfileSentences) {
-      const lines = buildStudentProfileLines(studentProfileSentences);
+    const studentRankings = currentContext?.classAnalytics?.student_rankings;
+    if (studentProfileSentences || studentRankings) {
+      const lines = buildStudentProfileLines(studentProfileSentences, studentRankings);
       if (lines.length) {
         overrides[STUDENT_PROFILE_SECTION_KEY] = lines;
       }
@@ -1643,12 +1659,12 @@
     return overrides;
   }
 
-  function buildStudentProfileLines(sentences = {}, limitPerCategory = 3) {
+  function buildStudentProfileLines(sentences = {}, rankings = null, limitPerCategory = 3) {
     const lines = [];
-    if (!sentences || typeof sentences !== "object") return lines;
+    const sentenceSource = sentences && typeof sentences === "object" ? sentences : {};
     const categories = [...STUDENT_PROFILE_CATEGORIES, "progressing", "stalled"];
     categories.forEach((key) => {
-      const entries = sentences[key];
+      const entries = sentenceSource[key];
       if (!Array.isArray(entries) || !entries.length) return;
       const label =
         STUDENT_PROFILE_CATEGORY_LABELS[key] ||
@@ -1660,6 +1676,18 @@
         lines.push(`${label} : ${clean}`);
       });
     });
+    if (rankings && typeof rankings === "object") {
+      STUDENT_RANKING_KEYS.forEach((key) => {
+        const entries = rankings[key];
+        if (!Array.isArray(entries) || !entries.length) return;
+        const label = STUDENT_RANKING_LABELS[key] || key;
+        entries.slice(0, limitPerCategory).forEach((entry) => {
+          if (!entry || !entry.student) return;
+          const reason = entry.reason ? ` — ${entry.reason}` : "";
+          lines.push(`${label} : ${entry.student}${reason}`);
+        });
+      });
+    }
     return lines.slice(0, 9);
   }
 
@@ -1698,7 +1726,10 @@
     if (nextSteps.length) {
       overrides.suite_proposee = nextSteps;
     }
-    const profileLines = buildStudentProfileLines(analysis.student_profile_sentences);
+    const profileLines = buildStudentProfileLines(
+      analysis.student_profile_sentences,
+      analysis.student_rankings
+    );
     if (profileLines.length) {
       overrides.reperages_eleves = profileLines;
     }
@@ -1841,6 +1872,12 @@
     const headerParts = [meta.className, meta.activityName, meta.sessionName].filter(Boolean);
     if (headerParts.length) {
       lines.push(`<div class="ai-context__line">🏫 ${escapeHtml(headerParts.join(" • "))}</div>`);
+    }
+    if (meta.studentLabel) {
+      const studentLabel = meta.studentClasse
+        ? `${meta.studentLabel} (${meta.studentClasse})`
+        : meta.studentLabel;
+      lines.push(`<div class="ai-context__line">👤 ${escapeHtml(studentLabel)}</div>`);
     }
     const count = meta.usedEntries || meta.totalEntries || meta.studentCount;
     if (count) {
@@ -2003,6 +2040,450 @@
       refs.openBtn.disabled = !hasData;
       refs.openBtn.title = hasData ? "" : "Ajoutez des élèves pour utiliser l’analyse IA";
     }
+    refreshStudentOptions();
+  }
+
+  function refreshStudentOptions() {
+    if (!refs.studentSelect) return;
+    const dataset = getDataset();
+    const options = buildStudentOptionList(dataset);
+    const previousValue = refs.studentSelect.value || "";
+    const hasPrevious = options.some((entry) => entry.key === previousValue);
+    const selectedValue = hasPrevious ? previousValue : "";
+    refs.studentSelect.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = options.length ? "Sélectionner un élève..." : "Aucun élève disponible";
+    placeholder.disabled = true;
+    if (!selectedValue) placeholder.selected = true;
+    refs.studentSelect.appendChild(placeholder);
+    options.forEach((entry) => {
+      const option = document.createElement("option");
+      option.value = entry.key;
+      option.textContent = entry.classe ? `${entry.label} — ${entry.classe}` : entry.label;
+      if (entry.key === selectedValue) option.selected = true;
+      refs.studentSelect.appendChild(option);
+    });
+    if (selectedValue) {
+      refs.studentSelect.value = selectedValue;
+    }
+    const hasOptions = options.length > 0;
+    refs.studentSelect.disabled = !hasOptions;
+    if (refs.studentSessionBtn) refs.studentSessionBtn.disabled = !hasOptions;
+    if (refs.studentCycleBtn) refs.studentCycleBtn.disabled = !hasOptions;
+    if (!hasOptions) {
+      studentDirectory = new Map();
+      setStatus(refs.studentStatus, "Ajoutez des élèves pour lancer un bilan individuel.", "info");
+      return;
+    }
+    setStatus(refs.studentStatus, "", "info");
+    studentDirectory = new Map(options.map((entry) => [entry.key, entry]));
+  }
+
+  function buildStudentOptionList(entries = []) {
+    const ledger = new Map();
+    (Array.isArray(entries) ? entries : []).forEach((entry, index) => {
+      if (!entry || typeof entry !== "object") return;
+      const identity = buildStudentIdentityFromRow(entry, index);
+      if (!identity || !identity.key) return;
+      if (!ledger.has(identity.key)) {
+        ledger.set(identity.key, identity);
+      }
+    });
+    return Array.from(ledger.values()).sort((a, b) => a.label.localeCompare(b.label, "fr", { sensitivity: "base" }));
+  }
+
+  function buildStudentIdentityFromRow(entry = {}, index = 0) {
+    const nom = safeStudentString(entry.nom || entry.Nom || entry.lastname || entry.last_name);
+    const prenom = safeStudentString(entry.prenom || entry.Prénom || entry.firstname || entry.first_name);
+    const classe = safeStudentString(entry.classe || entry.class || entry.groupe || entry.group);
+    let key = "";
+    if (!nom && !prenom) key = `__anon_${index}`;
+    else key = `${nom.toLowerCase()}|${prenom.toLowerCase()}|${classe.toLowerCase()}`;
+    const labelParts = [prenom, nom].filter(Boolean);
+    const label = labelParts.length ? labelParts.join(" ") : classe ? `Élève ${classe}` : `Élève ${index + 1}`;
+    return { key, label, prenom, nom, classe };
+  }
+
+  function safeStudentString(value) {
+    if (value == null) return "";
+    return String(value).trim();
+  }
+
+  function handleStudentAnalysis(scope = "session") {
+    if (!refs.studentSelect) return;
+    const studentKey = refs.studentSelect.value;
+    if (!studentKey) {
+      setStatus(refs.studentStatus, "Sélectionnez un élève avant de lancer le bilan.", "error");
+      refs.studentSelect.focus();
+      return;
+    }
+    const selected = studentDirectory.get(studentKey);
+    const label = selected?.label || "Élève";
+    setStatus(refs.studentStatus, `Analyse locale de ${label}...`, "info");
+    lastIntent = scope === "cycle" ? "eleve_cycle" : "eleve_session";
+    openModal();
+    setModalLoading(true);
+    setPanelBusy(true);
+    try {
+      const analysis =
+        scope === "cycle" ? runStudentCycleAnalysis(studentKey) : runStudentSessionAnalysis(studentKey);
+      if (!analysis) {
+        throw new Error("Données insuffisantes pour cet élève.");
+      }
+      currentContext.studentLabel = analysis.student_label || label;
+      currentContext.studentClasse = analysis.classe || selected?.classe || "";
+      currentContext.student_analysis = analysis;
+      renderStudentAnalysisReport(analysis, scope);
+      setStatus(refs.studentStatus, "Bilan élève disponible dans l’aperçu.", "success");
+    } catch (error) {
+      const userMessage = error?.userMessage || error?.message || "Bilan élève impossible pour le moment.";
+      renderFallbackError(userMessage);
+      setStatus(refs.studentStatus, userMessage, "error");
+    } finally {
+      setModalLoading(false);
+      setPanelBusy(false);
+    }
+  }
+
+  function runStudentSessionAnalysis(studentKey) {
+    const dataset = getDataset();
+    if (!dataset.length) {
+      throw new Error("Aucune donnée élève disponible pour cette séance.");
+    }
+    const summary = summarizeDataset();
+    const storedContext = getStoredAIContext();
+    const sessionMeta = getStoredSessionMeta();
+    const manualInterpretation = refs.interpretationField?.value || localStorage.getItem(STORAGE.INTERPRETATION) || "";
+    const { dictionary, forcedDictionary, forcedDictionaryId, manualEntry, autoDictionary } =
+      resolveDictionaryForStudentContext({
+        storedContext,
+        summary,
+        sessionMeta,
+      });
+    const retentionPlan = buildColumnRetentionPlan(summary.columns || [], dictionary, manualInterpretation);
+    const preparedDataset = dataset.map((entry) => cleanEntry(entry, retentionPlan));
+    const analyticsEngine = window.ScanProfClassAnalytics;
+    if (!analyticsEngine) {
+      throw new Error("Moteur d’analyse locale indisponible.");
+    }
+    const analytics = analyticsEngine.analyze({
+      dataset: preparedDataset,
+      dictionary,
+      summary,
+      manualText: manualInterpretation,
+      studentRequest: { key: studentKey, scope: "session" },
+    });
+    if (!analytics?.student_analysis) {
+      throw new Error("Impossible de calculer un bilan fiable avec ces données.");
+    }
+    setCurrentStudentContext({
+      storedContext,
+      summary,
+      dictionary,
+      datasetSize: dataset.length,
+      usedEntries: preparedDataset.length,
+      scope: "session",
+      dictionarySource: forcedDictionary
+        ? "forced"
+        : manualEntry
+        ? "manual"
+        : autoDictionary
+        ? "auto"
+        : dictionary?.source || "default",
+    });
+    return analytics.student_analysis;
+  }
+
+  function runStudentCycleAnalysis(studentKey) {
+    const cycleSessions = collectCycleSessions();
+    if (!cycleSessions.length) {
+      throw new Error("Aucun cycle enregistré pour cette activité.");
+    }
+    const sessionMeta = getStoredSessionMeta() || {};
+    const storedContext = getStoredAIContext();
+    const manualInterpretation = refs.interpretationField?.value || localStorage.getItem(STORAGE.INTERPRETATION) || "";
+    const { dictionary, forcedDictionary, forcedDictionaryId, manualEntry, autoDictionary } =
+      resolveDictionaryForStudentContext({
+        storedContext,
+        summary: {},
+        sessionMeta,
+      });
+    const analyticsEngine = window.ScanProfClassAnalytics;
+    if (!analyticsEngine || typeof analyticsEngine.buildStudentCycleAnalysis !== "function") {
+      throw new Error("Moteur d’analyse de cycle indisponible.");
+    }
+    const cycleBundle = buildCycleBundle(cycleSessions, {
+      sessionMeta,
+      baseDictionary: dictionary,
+      forcedDictionaryId,
+      forcedDictionary,
+      manualText: manualInterpretation,
+      summary: {},
+      interpretationEngine: window.ScanProfAIInterpretationEngine || null,
+      analyticsEngine,
+    });
+    if (!cycleBundle || !Array.isArray(cycleBundle.sessions) || cycleBundle.sessions.length < 2) {
+      const diagnostics = getCycleDiagnostics();
+      const retained = diagnostics.retained || 0;
+      throw new Error(`Cycle incomplet (${retained} séance${retained > 1 ? "s" : ""} exploitable${retained > 1 ? "s" : ""}).`);
+    }
+    const studentAnalysis = analyticsEngine.buildStudentCycleAnalysis({
+      sessions: cycleBundle.sessions,
+      studentKey,
+      dictionary,
+    });
+    if (!studentAnalysis) {
+      throw new Error("Aucun signal exploitable pour cet élève sur le cycle.");
+    }
+    const totalEntries = cycleBundle.sessions.reduce(
+      (sum, session) => sum + (Array.isArray(session.dataset) ? session.dataset.length : 0),
+      0
+    );
+    setCurrentStudentContext({
+      storedContext,
+      summary: {},
+      dictionary,
+      datasetSize: totalEntries,
+      usedEntries: totalEntries,
+      scope: "cycle",
+      cycleMeta: cycleBundle.cycle_meta || null,
+      cycleSessionCount: cycleBundle.sessions.length,
+      cycleAnalysis: cycleBundle.merged_cycle_analysis || null,
+      dictionarySource: forcedDictionary
+        ? "forced"
+        : manualEntry
+        ? "manual"
+        : autoDictionary
+        ? "auto"
+        : dictionary?.source || "default",
+    });
+    return studentAnalysis;
+  }
+
+  function resolveDictionaryForStudentContext({ storedContext = {}, summary = {}, sessionMeta = null }) {
+    const forcedDictionaryId = sessionMeta?.forcedDictionaryId || null;
+    const forcedDictionary = forcedDictionaryId ? getDictionaryByIdSafe(forcedDictionaryId) : null;
+    const manualEntry = forcedDictionary ? null : getManualDictionaryEntry(storedContext);
+    const manualDictionary = manualEntry?.dictionary || null;
+    const autoDictionary =
+      forcedDictionary || manualDictionary
+        ? null
+        : getActivityDictionary(
+            storedContext?.activite || summary?.meta?.activityName || sessionMeta?.activityName || ""
+          );
+    const dictionary = forcedDictionary || manualDictionary || autoDictionary || null;
+    return { dictionary, forcedDictionary, forcedDictionaryId, manualEntry, autoDictionary };
+  }
+
+  function setCurrentStudentContext({
+    storedContext = {},
+    summary = {},
+    dictionary = null,
+    datasetSize = 0,
+    usedEntries = 0,
+    scope = "session",
+    cycleMeta = null,
+    cycleSessionCount = 0,
+    cycleAnalysis = null,
+    dictionarySource = "default",
+  }) {
+    const meta = summary.meta || {};
+    const className = cycleMeta?.class_name || storedContext?.classe || meta.className || "";
+    const activityName =
+      cycleMeta?.activity_name || storedContext?.activite || meta.activityName || dictionary?.label || "";
+    const sessionName =
+      scope === "cycle"
+        ? cycleMeta?.cycle_name || storedContext?.seance || `Cycle (${cycleSessionCount} séances)`
+        : storedContext?.seance || meta.sessionName || "";
+    currentContext = {
+      className,
+      activityName,
+      sessionName,
+      providerLabel: "Analyse locale",
+      intent: lastIntent,
+      totalEntries: datasetSize,
+      usedEntries,
+      studentCount: datasetSize,
+      sessionDate: storedContext?.date || meta.updatedAt || meta.savedAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      dictionaryInfo: dictionary
+        ? {
+            id: dictionary.id || "",
+            label: dictionary.label || dictionary.id || "",
+            source: dictionarySource,
+          }
+        : null,
+      isCycle: scope === "cycle",
+      cycleSessionCount: scope === "cycle" ? cycleSessionCount : 0,
+      cycleAnalysis: scope === "cycle" ? cycleAnalysis : null,
+      studentLabel: "",
+      studentClasse: "",
+    };
+  }
+
+  function renderStudentAnalysisReport(analysis, scope = "session") {
+    if (!analysis) {
+      renderFallbackError("Aucun résultat à afficher.");
+      return;
+    }
+    const summaryLines = buildStudentSummaryLines(analysis);
+    const metricLines = buildStudentMetricLines(analysis);
+    const historyLines = buildStudentHistoryLines(analysis.history || []);
+    const sections = [
+      {
+        label: "Synthèse",
+        value: summaryLines.length ? summaryLines.join(" ") : "Analyse locale réalisée avec les données disponibles.",
+      },
+      {
+        label: "Points forts",
+        value: Array.isArray(analysis.strengths) && analysis.strengths.length ? analysis.strengths : [],
+      },
+      {
+        label: "Points de vigilance",
+        value: Array.isArray(analysis.focus) && analysis.focus.length ? analysis.focus : [],
+      },
+      {
+        label: "Suite proposée",
+        value: Array.isArray(analysis.next_steps) && analysis.next_steps.length ? analysis.next_steps : [],
+      },
+      {
+        label: "Repères chiffrés",
+        value: metricLines.length ? metricLines : analysis.comparisons || [],
+      },
+    ];
+    if (historyLines.length) {
+      sections.push({
+        label: scope === "cycle" ? "Historique du cycle" : "Historique",
+        value: historyLines,
+      });
+    }
+    if (refs.modalModeIndicator) {
+      refs.modalModeIndicator.textContent =
+        scope === "cycle" ? "Mode IA : bilan élève (cycle)" : "Mode IA : bilan élève (séance)";
+    }
+    refs.modalDictionaryIndicator?.classList.add("sp-hidden");
+    const entries = sections.map((section) => ({
+      label: section.label,
+      value: section.value,
+      content: valueToPlainText(section.value) || EMPTY_SECTION_TEXT,
+    }));
+    refs.modalContent.innerHTML = entries.map((entry) => renderSection(entry.label, entry.value)).join("");
+    updateReportState(entries);
+  }
+
+  function buildStudentSummaryLines(analysis = {}) {
+    const lines = [];
+    if (analysis.student_label) {
+      const nameLine = analysis.classe ? `${analysis.student_label} — ${analysis.classe}` : analysis.student_label;
+      lines.push(nameLine);
+    }
+    if (analysis.activity_label) {
+      lines.push(`Activité : ${analysis.activity_label}.`);
+    }
+    if (analysis.positioning) {
+      lines.push(`Positionnement : ${describeStudentPositioning(analysis.positioning)}.`);
+    }
+    if (analysis.trend) {
+      lines.push(`Tendance : ${describeStudentTrend(analysis.trend)}.`);
+    }
+    return lines;
+  }
+
+  function buildStudentMetricLines(analysis = {}) {
+    const lines = [];
+    if (analysis.attempts && (Number.isFinite(analysis.attempts.student) || Number.isFinite(analysis.attempts.class_mean))) {
+      const studentValue = Number.isFinite(analysis.attempts.student)
+        ? `${roundValue(analysis.attempts.student, 1)} essai(s)`
+        : null;
+      const classValue = Number.isFinite(analysis.attempts.class_mean)
+        ? `${roundValue(analysis.attempts.class_mean, 1)} en classe`
+        : null;
+      if (studentValue || classValue) {
+        lines.push(
+          [`Volume d’essais`, studentValue, classValue ? `(${classValue})` : null].filter(Boolean).join(" ")
+        );
+      }
+    }
+    if (analysis.performance && analysis.performance.label) {
+      const studentPerf =
+        analysis.performance.unit === "ratio"
+          ? formatRatioValue(analysis.performance.student_value)
+          : analysis.performance.student_value != null
+          ? `${analysis.performance.student_value}`
+          : null;
+      const classPerf =
+        analysis.performance.unit === "ratio"
+          ? formatRatioValue(analysis.performance.class_value)
+          : analysis.performance.class_value != null
+          ? `${analysis.performance.class_value}`
+          : null;
+      if (studentPerf || classPerf) {
+        lines.push(
+          `${analysis.performance.label} : ${studentPerf || "—"}${classPerf ? ` (classe ${classPerf})` : ""}`
+        );
+      }
+    }
+    (analysis.comparisons || []).forEach((item) => {
+      if (item) lines.push(item);
+    });
+    return lines.slice(0, 5);
+  }
+
+  function buildStudentHistoryLines(history = []) {
+    const list = [];
+    history.forEach((entry) => {
+      if (!entry) return;
+      const parts = [entry.session_label || "Séance"];
+      if (entry.session_date) {
+        parts.push(formatHistoryDate(entry.session_date));
+      }
+      const details = [];
+      if (Number.isFinite(entry.attempts)) details.push(`${roundValue(entry.attempts, 1)} essai(s)`);
+      if (Number.isFinite(entry.success_rate)) details.push(`${formatRatioValue(entry.success_rate)} réussite`);
+      if (Number.isFinite(entry.cross_above_share)) details.push(`${formatRatioValue(entry.cross_above_share)} au-dessus du plan`);
+      if (!details.length && Number.isFinite(entry.class_attempts)) {
+        details.push(`Classe : ${roundValue(entry.class_attempts, 1)} essai(s)`);
+      }
+      const line = details.length ? `${parts.join(" • ")} — ${details.join(" • ")}` : parts.join(" • ");
+      list.push(line);
+    });
+    return list.slice(0, STUDENT_HISTORY_LIMIT);
+  }
+
+  function formatHistoryDate(value) {
+    const timestamp = Date.parse(value);
+    if (!Number.isNaN(timestamp)) {
+      try {
+        return new Date(timestamp).toLocaleDateString("fr-FR");
+      } catch {
+        return new Date(timestamp).toISOString().slice(0, 10);
+      }
+    }
+    return String(value);
+  }
+
+  function describeStudentPositioning(positioning = "near") {
+    if (positioning === "above") return "au-dessus de la moyenne de classe";
+    if (positioning === "below") return "en dessous de la moyenne de classe";
+    return "proche de la moyenne de classe";
+  }
+
+  function describeStudentTrend(trend = "stable") {
+    if (trend === "progression") return "en progression";
+    if (trend === "soutien") return "à relancer";
+    return "stable";
+  }
+
+  function formatRatioValue(value) {
+    if (!Number.isFinite(value)) return "—";
+    return `${Math.round(value * 100)}%`;
+  }
+
+  function roundValue(value, precision = 2) {
+    if (!Number.isFinite(value)) return 0;
+    const factor = 10 ** precision;
+    return Math.round(value * factor) / factor;
   }
 
   function checkPendingCycleTrigger() {
@@ -2527,6 +3008,7 @@
       summary_sentences: representativeSession?.summary_sentences || null,
       student_profiles: representativeSession?.student_profiles || null,
       student_profile_sentences: representativeSession?.student_profile_sentences || null,
+      student_analysis: representativeSession?.student_analysis || null,
       class_analytics: representativeSession?.class_analytics || null,
       session_bundle: null,
       cycle_bundle: cycleBundle,
@@ -3272,10 +3754,15 @@
     const meta = currentContext || {};
     const date = meta.updatedAt ? new Date(meta.updatedAt).toLocaleString() : new Date().toLocaleString();
     const provider = meta.providerLabel ? ` • ${meta.providerLabel}` : "";
+    const studentSegment = meta.studentLabel
+      ? `${meta.studentLabel}${meta.studentClasse ? ` (${meta.studentClasse})` : ""} • `
+      : "";
     if (meta.className) {
-      return `${meta.className}${meta.activityName ? ` • ${meta.activityName}` : ""}${meta.sessionName ? ` • ${meta.sessionName}` : ""}${provider} — ${date}`;
+      return `${studentSegment}${meta.className}${
+        meta.activityName ? ` • ${meta.activityName}` : ""
+      }${meta.sessionName ? ` • ${meta.sessionName}` : ""}${provider} — ${date}`;
     }
-    return `Bilan généré le ${date}${provider}`;
+    return `${studentSegment}Bilan généré le ${date}${provider}`;
   }
 
   function intentTitle(intent) {
@@ -3288,6 +3775,10 @@
         return "Préparer la séance suivante";
       case "question":
         return "Question sur la séance";
+      case "eleve_session":
+        return "Bilan élève (séance)";
+      case "eleve_cycle":
+        return "Bilan élève (cycle)";
       default:
         return "Bilan IA de la séance";
     }

@@ -54,7 +54,9 @@
     .ai-summary-value{font-size:0.95rem;font-weight:600;}
     .ai-field{display:flex;flex-direction:column;gap:6px;font-size:0.9rem;}
     .ai-field input,
-    .ai-field textarea{padding:8px 10px;border-radius:10px;border:1px solid var(--sp-border);background:var(--sp-table-even);color:var(--sp-text);}
+    .ai-field textarea,
+    .ai-field select{padding:8px 10px;border-radius:10px;border:1px solid var(--sp-border);background:var(--sp-table-even);color:var(--sp-text);}
+    .ai-field select{width:100%;}
     .ai-field textarea{min-height:80px;resize:vertical;}
     .ai-interpretation summary{cursor:pointer;font-weight:600;}
     .ai-interpretation textarea{min-height:70px;font-size:0.85rem;}
@@ -267,6 +269,18 @@
       </details>
       <div class="ai-dictionary-hint ai-dictionary-hint--empty" id="ai-dictionary-hint">Chargement du référentiel en cours...</div>
       <div class="ai-dictionary-alert sp-hidden" id="ai-dictionary-alert"></div>
+      <div class="ai-field">
+        <label for="ai-student-select">Bilan élève (local)</label>
+        <select id="ai-student-select" disabled>
+          <option value="">Aucun élève disponible</option>
+        </select>
+        <div class="ai-input-row">
+          <button type="button" class="ai-btn outline" id="ai-student-session-btn" disabled>🧑‍🏫 Séance</button>
+          <button type="button" class="ai-btn outline" id="ai-student-cycle-btn" disabled>🔁 Cycle</button>
+        </div>
+        <p class="ai-panel__note">Calcul local sans requête IA (cycle à partir de 2 séances retenues).</p>
+      </div>
+      <div class="ai-status" id="ai-student-status"></div>
       <div class="ai-actions-grid">
         <button type="button" class="ai-btn primary" id="ai-action-assistant">
           🚀 Analyser la séance

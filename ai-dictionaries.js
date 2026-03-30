@@ -223,6 +223,120 @@
     },
   });
 
+  const CROSS_TRAINING_ABBREVIATIONS = DEFAULT_DICTIONARIES.cross_training?.abbreviations || {};
+  const CLIMB_TRACK_ABBREVIATIONS = DEFAULT_DICTIONARIES.climb_track?.abbreviations || {};
+  const ARCATHLON_ABBREVIATIONS = DEFAULT_DICTIONARIES.arcathlon_v2?.abbreviations || {};
+  const LASER_RUN_ABBREVIATIONS = DEFAULT_DICTIONARIES.laser_run?.abbreviations || {};
+
+  const APPLICATION_TRANSLATIONS = Object.freeze(
+    normalizeTranslationProfiles({
+      cross_training: {
+        id: "cross_training",
+        aliases: ["cross training", "cross-training", "cross", "circuit training", "wod"],
+        abbreviations: CROSS_TRAINING_ABBREVIATIONS,
+        fields: {
+          planned: { label: "Valeur prévue", normalizedField: "planned_volume", suffix: "_p" },
+          realized: { label: "Valeur réalisée", normalizedField: "realized_volume", suffix: "_r" },
+        },
+        columnMap: {
+          bu: { label: CROSS_TRAINING_ABBREVIATIONS.bu, normalizedField: "burpees", type: "exercise" },
+          cr: { label: CROSS_TRAINING_ABBREVIATIONS.cr, normalizedField: "crunch", type: "exercise" },
+          di: { label: CROSS_TRAINING_ABBREVIATIONS.di, normalizedField: "dips", type: "exercise" },
+          fe: { label: CROSS_TRAINING_ABBREVIATIONS.fe, normalizedField: "fentes", type: "exercise" },
+          jk: { label: CROSS_TRAINING_ABBREVIATIONS.jk, normalizedField: "jumping_jack", type: "exercise" },
+          mt: { label: CROSS_TRAINING_ABBREVIATIONS.mt, normalizedField: "mountain_climber", type: "exercise" },
+          sa: { label: CROSS_TRAINING_ABBREVIATIONS.sa, normalizedField: "saut", type: "exercise" },
+          po: { label: CROSS_TRAINING_ABBREVIATIONS.po, normalizedField: "pompes", type: "exercise" },
+          ra: { label: CROSS_TRAINING_ABBREVIATIONS.ra, normalizedField: "rameur", type: "exercise" },
+          sq: { label: CROSS_TRAINING_ABBREVIATIONS.sq, normalizedField: "squat", type: "exercise" },
+        },
+        minimumUsableSignals: ["planned_vs_realized_gap"],
+        fallbackFocus: ["engagement", "collecte_prevu_realise"],
+        analysisProfile: "light",
+      },
+      climb_track: {
+        id: "climb_track",
+        aliases: ["climb track", "climbtrack", "escalade", "grimpe"],
+        abbreviations: CLIMB_TRACK_ABBREVIATIONS,
+        fields: {
+          statut: { label: "Statut", normalizedField: "status" },
+          niveau: { label: "Cotation", normalizedField: "level" },
+          pratique: { label: "Pratique", normalizedField: "practice" },
+        },
+        columnMap: {
+          m: { label: CLIMB_TRACK_ABBREVIATIONS.m, normalizedField: "practice_m", type: "practice" },
+          mt: { label: CLIMB_TRACK_ABBREVIATIONS.mt, normalizedField: "practice_mt", type: "practice" },
+          t: { label: CLIMB_TRACK_ABBREVIATIONS.t, normalizedField: "practice_t", type: "practice" },
+          e: { label: CLIMB_TRACK_ABBREVIATIONS.e, normalizedField: "status_e", type: "status" },
+          e2: { label: CLIMB_TRACK_ABBREVIATIONS.e2, normalizedField: "status_e2", type: "status" },
+          n3d: { label: CLIMB_TRACK_ABBREVIATIONS.n3d, normalizedField: "status_n3d", type: "status" },
+          relais: { label: CLIMB_TRACK_ABBREVIATIONS.relais, normalizedField: "relais", type: "metric" },
+          cotation: { label: CLIMB_TRACK_ABBREVIATIONS.cotation, normalizedField: "cotation", type: "level" },
+          bloc: { label: CLIMB_TRACK_ABBREVIATIONS.bloc, normalizedField: "bloc", type: "identifier" },
+          vitesse: { label: CLIMB_TRACK_ABBREVIATIONS.vitesse, normalizedField: "vitesse", type: "time" },
+          couleur: { label: CLIMB_TRACK_ABBREVIATIONS.couleur, normalizedField: "couleur", type: "level" },
+          r: { label: CLIMB_TRACK_ABBREVIATIONS.r, normalizedField: "repere", type: "identifier" },
+        },
+        minimumUsableSignals: ["status_distribution", "cotation_trend", "practice_distribution"],
+        fallbackFocus: ["statuts_voies", "progression_cotations", "engagement_pratiques"],
+        analysisProfile: "rich",
+      },
+      arcathlon_v2: {
+        id: "arcathlon_v2",
+        aliases: ["arcathlon v2", "arcathlon-v2", "arcathlon"],
+        abbreviations: ARCATHLON_ABBREVIATIONS,
+        fields: {
+          points_total: { label: "Points total", normalizedField: "points_total" },
+          points_max: { label: "Points max", normalizedField: "points_max" },
+          precision: { label: "Distribution des tirs", normalizedField: "precision" },
+          zone2: { label: "Zone 2", normalizedField: "zone2" },
+        },
+        columnMap: {
+          distance: { label: ARCATHLON_ABBREVIATIONS.distance, normalizedField: "distance", type: "distance" },
+          indice_arc: { label: ARCATHLON_ABBREVIATIONS.indice_arc, normalizedField: "indice_arc", type: "index" },
+          nb_10: { label: ARCATHLON_ABBREVIATIONS.nb_10, normalizedField: "shots_10", type: "distribution" },
+          nb_9: { label: ARCATHLON_ABBREVIATIONS.nb_9, normalizedField: "shots_9", type: "distribution" },
+          nb_8: { label: ARCATHLON_ABBREVIATIONS.nb_8, normalizedField: "shots_8", type: "distribution" },
+          nb_7: { label: ARCATHLON_ABBREVIATIONS.nb_7, normalizedField: "shots_7", type: "distribution" },
+          nb_6: { label: ARCATHLON_ABBREVIATIONS.nb_6, normalizedField: "shots_6", type: "distribution" },
+          points_max: { label: ARCATHLON_ABBREVIATIONS.points_max, normalizedField: "points_max", type: "score" },
+          points_total: { label: ARCATHLON_ABBREVIATIONS.points_total, normalizedField: "points_total", type: "score" },
+          zone_entries: { label: ARCATHLON_ABBREVIATIONS.zone_entries, normalizedField: "zone_entries", type: "metric" },
+          zone2_points: { label: ARCATHLON_ABBREVIATIONS.zone2_points, normalizedField: "zone2_points", type: "score" },
+          zone2_shots: { label: ARCATHLON_ABBREVIATIONS.zone2_shots, normalizedField: "zone2_shots", type: "metric" },
+        },
+        minimumUsableSignals: ["points_total_vs_points_max", "precision_distribution", "zone2_rendement"],
+        fallbackFocus: ["points_total", "zone2_points", "indice_arc"],
+        analysisProfile: "mixed",
+      },
+      laser_run: {
+        id: "laser_run",
+        aliases: ["laser run", "laser-run", "laser", "run"],
+        abbreviations: LASER_RUN_ABBREVIATIONS,
+        fields: {
+          distance: { label: "Distance", normalizedField: "distance" },
+          vitesse: { label: "Vitesse", normalizedField: "speed" },
+          indice_tir: { label: "Indice de tir", normalizedField: "shooting_index" },
+          leds: { label: "LED tir", normalizedField: "led_distribution" },
+        },
+        columnMap: {
+          distance: { label: LASER_RUN_ABBREVIATIONS.distance, normalizedField: "distance", type: "distance" },
+          vitesse: { label: LASER_RUN_ABBREVIATIONS.vitesse, normalizedField: "vitesse", type: "speed" },
+          indice_tir: { label: LASER_RUN_ABBREVIATIONS.indice_tir, normalizedField: "indice_tir", type: "index" },
+          nb_led_0: { label: LASER_RUN_ABBREVIATIONS.nb_led_0, normalizedField: "led_0", type: "distribution" },
+          nb_led_1: { label: LASER_RUN_ABBREVIATIONS.nb_led_1, normalizedField: "led_1", type: "distribution" },
+          nb_led_2: { label: LASER_RUN_ABBREVIATIONS.nb_led_2, normalizedField: "led_2", type: "distribution" },
+          nb_led_3: { label: LASER_RUN_ABBREVIATIONS.nb_led_3, normalizedField: "led_3", type: "distribution" },
+          nb_led_4: { label: LASER_RUN_ABBREVIATIONS.nb_led_4, normalizedField: "led_4", type: "distribution" },
+          nb_led_5: { label: LASER_RUN_ABBREVIATIONS.nb_led_5, normalizedField: "led_5", type: "distribution" },
+        },
+        minimumUsableSignals: ["indice_tir", "led_distribution"],
+        fallbackFocus: ["equilibre_course_tir", "collecte_led"],
+        analysisProfile: "mixed",
+      },
+    })
+  );
+
   function deepClone(value) {
     return JSON.parse(JSON.stringify(value));
   }
@@ -238,6 +352,105 @@
       .replace(/[\u0300-\u036f]/g, "")
       .replace(/[^a-z0-9]+/g, "_")
       .replace(/^_+|_+$/g, "");
+  }
+
+  function normalizeTranslationProfiles(record = {}) {
+    const normalized = {};
+    Object.entries(record || {}).forEach(([key, profile]) => {
+      if (!profile) return;
+      const id = slugify(profile.id || key);
+      if (!id) return;
+      const aliases = filterStringList(profile.aliases || []);
+      const aliasSlugs = Array.from(new Set([id, ...aliases.map((alias) => slugify(alias))])).filter(Boolean);
+      const normalizedProfile = {
+        id,
+        aliases,
+        aliasSlugs,
+        abbreviations: profile.abbreviations ? deepClone(profile.abbreviations) : {},
+        columnMap: normalizeTranslationColumnMap(profile.columnMap || {}),
+        fields: normalizeTranslationFields(profile.fields || {}),
+        minimumUsableSignals: filterStringList(profile.minimumUsableSignals || []),
+        fallbackFocus: filterStringList(profile.fallbackFocus || []),
+        analysisProfile: ["rich", "mixed", "light"].includes(profile.analysisProfile)
+          ? profile.analysisProfile
+          : "mixed",
+      };
+      normalized[id] = normalizedProfile;
+    });
+    return normalized;
+  }
+
+  function normalizeTranslationColumnMap(columnMap = {}) {
+    const normalized = {};
+    Object.entries(columnMap).forEach(([key, entry]) => {
+      if (!key) return;
+      const normalizedKey = slugify(key);
+      if (!normalizedKey) return;
+      const payload = entry || {};
+      normalized[normalizedKey] = {
+        key: normalizedKey,
+        rawKey: key,
+        normalizedField: payload.normalizedField || normalizedKey,
+        label: payload.label || payload.name || key,
+        type: payload.type || "metric",
+        description: payload.description || "",
+      };
+    });
+    return normalized;
+  }
+
+  function normalizeTranslationFields(fieldMap = {}) {
+    const normalized = {};
+    Object.entries(fieldMap).forEach(([key, entry]) => {
+      if (!key) return;
+      const normalizedKey = slugify(key);
+      if (!normalizedKey) return;
+      const payload = entry || {};
+      normalized[normalizedKey] = {
+        key: normalizedKey,
+        label: payload.label || payload.name || key,
+        normalizedField: payload.normalizedField || normalizedKey,
+        suffix: payload.suffix || null,
+        description: payload.description || "",
+      };
+    });
+    return normalized;
+  }
+
+  function filterStringList(list = []) {
+    const seen = new Set();
+    const values = [];
+    (Array.isArray(list) ? list : []).forEach((value) => {
+      const text = String(value || "").trim();
+      if (!text) return;
+      if (seen.has(text)) return;
+      seen.add(text);
+      values.push(text);
+    });
+    return values;
+  }
+
+  function attachTranslationProfile(profile) {
+    if (!profile) return null;
+    const cloned = deepClone(profile);
+    if (cloned.aliasSlugs) delete cloned.aliasSlugs;
+    return cloned;
+  }
+
+  function listTranslationProfiles() {
+    return Object.values(APPLICATION_TRANSLATIONS).map((profile) => attachTranslationProfile(profile));
+  }
+
+  function getTranslationProfile(idOrActivityName) {
+    if (!idOrActivityName) return null;
+    const slug = slugify(idOrActivityName);
+    if (APPLICATION_TRANSLATIONS[slug]) {
+      return attachTranslationProfile(APPLICATION_TRANSLATIONS[slug]);
+    }
+    const match = Object.values(APPLICATION_TRANSLATIONS).find((entry) =>
+      entry.aliasSlugs.includes(slug)
+    );
+    return match ? attachTranslationProfile(match) : null;
   }
 
   function loadUserDictionaries() {
@@ -485,6 +698,8 @@
     getDictionaryForActivity,
     matchActivity: matchActivityDictionary,
     getDictionaryById,
+    listTranslationProfiles,
+    getTranslationProfile,
     getDefaultDictionaries: () => deepClone(DEFAULT_DICTIONARIES),
     upsertDictionary,
     removeDictionary,

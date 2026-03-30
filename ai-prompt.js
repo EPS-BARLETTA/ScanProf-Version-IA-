@@ -144,6 +144,7 @@
       student_profiles: payload.student_profiles || payload.class_analytics?.student_profiles || null,
       student_profile_sentences:
         payload.student_profile_sentences || payload.class_analytics?.student_profile_sentences || null,
+      student_analysis: payload.student_analysis || payload.class_analytics?.student_analysis || null,
       class_analytics: payload.class_analytics || null,
       session_bundle: sessionBundle,
       cycle_bundle: cycleBundle,
