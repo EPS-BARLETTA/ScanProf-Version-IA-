@@ -2042,6 +2042,45 @@
         overrides[sectionKey] = config.type === "text" ? subset.join(" ") : subset;
       });
     }
+    const teachingDiagnosis = currentContext?.classAnalytics?.teaching_diagnosis;
+    const nextGuidance = currentContext?.classAnalytics?.next_session_guidance;
+    if (teachingDiagnosis) {
+      const diagLines = takeNonEmptyStrings(
+        [teachingDiagnosis.main_finding, teachingDiagnosis.class_profile],
+        2
+      );
+      if (diagLines.length && !overrides.synthese) {
+        overrides.synthese = diagLines.join(" ");
+      }
+      const needsList = takeNonEmptyStrings(
+        [
+          teachingDiagnosis.priority_hint,
+          ...(teachingDiagnosis.evidence || []).slice(0, 2),
+        ],
+        3
+      );
+      if (needsList.length) {
+        const existingNeeds = Array.isArray(overrides.points_a_retravailler)
+          ? overrides.points_a_retravailler
+          : [];
+        overrides.points_a_retravailler = Array.from(new Set([...existingNeeds, ...needsList]));
+      }
+    }
+    if (nextGuidance) {
+      const suiteList = takeNonEmptyStrings(
+        [
+          nextGuidance.priority_for_next_session,
+          nextGuidance.rationale,
+          ...(nextGuidance.teaching_levers || []),
+          ...(nextGuidance.next_session_ideas || []),
+        ],
+        4
+      );
+      if (suiteList.length) {
+        const existingSuite = Array.isArray(overrides.suite_proposee) ? overrides.suite_proposee : [];
+        overrides.suite_proposee = Array.from(new Set([...existingSuite, ...suiteList]));
+      }
+    }
     const studentProfileSentences = currentContext?.classAnalytics?.student_profile_sentences;
     const studentRankings = currentContext?.classAnalytics?.student_rankings;
     if (studentProfileSentences || studentRankings) {

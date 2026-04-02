@@ -200,6 +200,7 @@
     }
 
     finalizeAnalytics(base);
+    attachTeachingInsights(base, dictionary);
     return base;
   }
 
@@ -3739,6 +3740,222 @@
         base.student_rankings[key] = limitRankingEntries(base.student_rankings[key], STUDENT_RANKING_LIMIT);
       });
     }
+  }
+
+  function attachTeachingInsights(base, dictionary) {
+    if (!base) return;
+    const payload = buildTeachingDiagnosisInsights(base, dictionary);
+    if (!payload) return;
+    if (payload.teachingDiagnosis) {
+      base.teaching_diagnosis = payload.teachingDiagnosis;
+    }
+    if (payload.nextSessionGuidance) {
+      base.next_session_guidance = payload.nextSessionGuidance;
+    }
+    if (payload.summary_sentences) {
+      base.summary_sentences = mergeSummarySentences(base.summary_sentences || createSummarySentences(), payload.summary_sentences);
+    }
+  }
+
+  function buildTeachingDiagnosisInsights(base = {}, dictionary = {}) {
+    const aggregate = base.class_overview?.aggregate || {};
+    const meanEntries = Number.isFinite(aggregate.mean_entries_per_student)
+      ? aggregate.mean_entries_per_student
+      : Number.isFinite(base.measures?.voies?.mean_per_student)
+      ? base.measures.voies.mean_per_student
+      : 0;
+    const medianEntries = Number.isFinite(aggregate.median_entries_per_student)
+      ? aggregate.median_entries_per_student
+      : Number.isFinite(base.measures?.voies?.median_per_student)
+      ? base.measures.voies.median_per_student
+      : 0;
+    const studentCount = aggregate.student_count || base.data_quality?.unique_students || 0;
+    const datasetEntries = aggregate.total_entries || base.data_quality?.dataset_entries || 0;
+    const dataIssues = base.data_quality?.issues || [];
+    const heterogeneityLabel =
+      base.measures?.cotation?.heterogeneity?.label ||
+      base.measures?.cross_training?.heterogeneity?.label ||
+      null;
+    const heterogeneityScore = heterogeneityRank(heterogeneityLabel);
+    const successShare = findComparisonShare(base, "réuss");
+    const learningField = dictionary?.learningField || dictionary?.label || "l’activité";
+
+    const coverageLow = datasetEntries < Math.max(studentCount, 1) || meanEntries < 1;
+    const recurrentIssues = dataIssues.length >= 2;
+    const heterogeneityHigh = heterogeneityScore != null && heterogeneityScore >= 2;
+    const challengePlateau = Number.isFinite(successShare) && successShare >= 0.7 && !heterogeneityHigh;
+    const engagementLow = meanEntries > 0 && meanEntries < 1.3 && !recurrentIssues;
+
+    let scenario = "balanced";
+    if (recurrentIssues || coverageLow) scenario = "data_gap";
+    else if (heterogeneityHigh) scenario = "heterogeneity";
+    else if (challengePlateau) scenario = "raise_level";
+    else if (engagementLow) scenario = "engagement";
+
+    const teachingPriorities = dictionary?.teachingPriorities || [];
+    const didacticLevers = dictionary?.didacticLevers || [];
+    const sessionTemplates = dictionary?.nextSessionTemplates || [];
+
+    const evidence = [];
+    if (Number.isFinite(meanEntries) && studentCount) {
+      evidence.push(`${round(meanEntries, 2)} essai(s) en moyenne pour ${studentCount} élève(s).`);
+    }
+    if (Number.isFinite(medianEntries) && studentCount) {
+      evidence.push(`Médiane à ${round(medianEntries, 2)} essai(s).`);
+    }
+    if (Number.isFinite(successShare)) {
+      evidence.push(`${toPercent(successShare)} % des élèves valident au moins une tentative.`);
+    }
+    if (heterogeneityLabel) {
+      evidence.push(`Hétérogénéité ${heterogeneityLabel}.`);
+    }
+    if (dataIssues.length) {
+      evidence.push(dataIssues[0]);
+    }
+
+    const summarySentences = createSummarySentences();
+    const diagnosis = {
+      learning_field: learningField,
+      scenario,
+      evidence: Array.from(new Set(evidence.filter(Boolean))).slice(0, 4),
+    };
+    const guidance = {
+      learning_field: learningField,
+      levers: [],
+      next_session_ideas: [],
+    };
+
+    switch (scenario) {
+      case "data_gap": {
+        diagnosis.main_finding = `Les relevés restent trop partiels pour lire la progression en ${learningField}.`;
+        diagnosis.class_profile =
+          "L'engagement existe mais les colonnes prévues/renseignées ne suffisent pas à dégager une tendance.";
+        diagnosis.priority_hint =
+          "Stabiliser un protocole de collecte identique pour toute la classe lors de la prochaine séance.";
+        guidance.priority_for_next_session = diagnosis.priority_hint;
+        guidance.rationale =
+          "Des données homogènes permettront de comparer les séances et d'objectiver les progrès.";
+        guidance.levers = selectGuidanceItems(
+          ["Imposer la même feuille prévu/réalisé", "Nommer un binôme garant des relevés."],
+          didacticLevers,
+          3
+        );
+        guidance.next_session_ideas = selectGuidanceItems(
+          ["Démarrer la séance par un court rappel des indicateurs à renseigner."],
+          sessionTemplates,
+          3
+        );
+        break;
+      }
+      case "heterogeneity": {
+        diagnosis.main_finding = `La classe présente une hétérogénéité marquée sur ${learningField}.`;
+        diagnosis.class_profile =
+          "Les écarts de niveau/engagement nécessitent une différenciation plus visible pour maintenir tout le monde en progression.";
+        diagnosis.priority_hint = "Préparer des tâches différenciées (groupes de besoin ou paliers de difficulté).";
+        guidance.priority_for_next_session = diagnosis.priority_hint;
+        guidance.rationale = "Chaque sous-groupe doit identifier un défi atteignable et observable.";
+        guidance.levers = selectGuidanceItems(
+          ["Constituer 2 à 3 ateliers avec consignes graduées.", "Formaliser des contrats d’essais par groupe."],
+          didacticLevers,
+          3
+        );
+        guidance.next_session_ideas = selectGuidanceItems(
+          ["Installer une rotation libre mais avec objectif clair pour chaque couleur / atelier."],
+          sessionTemplates,
+          3
+        );
+        break;
+      }
+      case "raise_level": {
+        diagnosis.main_finding = `La majorité des élèves valide les tâches sécurisées : la montée en exigence reste à provoquer.`;
+        diagnosis.class_profile = `Les indicateurs montrent une forte réussite mais peu de tentatives sur le niveau supérieur en ${learningField}.`;
+        diagnosis.priority_hint = "Planifier une montée en difficulté accompagnée pour faire évoluer les repères.";
+        guidance.priority_for_next_session = diagnosis.priority_hint;
+        guidance.rationale = "La progression passe par des essais guidés sur une difficulté légèrement supérieure.";
+        guidance.levers = selectGuidanceItems(
+          ["Prévoir un essai guidé sur la cotation +1 ou sur un tempo plus exigeant."],
+          didacticLevers,
+          3
+        );
+        guidance.next_session_ideas = selectGuidanceItems(
+          ["Mettre en place un défi 'voie repère' ou 'atelier intensité' à comparer avec la séance précédente."],
+          sessionTemplates,
+          3
+        );
+        break;
+      }
+      case "engagement": {
+        diagnosis.main_finding = `L'engagement reste mesuré (${round(meanEntries, 2)} essai(s) / élève) : il faut densifier la pratique.`;
+        diagnosis.class_profile = "Plusieurs élèves n'ont pas encore un volume suffisant pour objectiver une progression.";
+        diagnosis.priority_hint = "Augmenter le nombre d'essais observables par élève avec un temps d'activité plus dense.";
+        guidance.priority_for_next_session = diagnosis.priority_hint;
+        guidance.rationale = "Sans volume minimum, les repères restent fragiles.";
+        guidance.levers = selectGuidanceItems(
+          ["Organiser des séries courtes et répétées avec feedback immédiat."],
+          didacticLevers,
+          3
+        );
+        guidance.next_session_ideas = selectGuidanceItems(
+          ["Alterner deux passages rapides plutôt qu'un seul long essai pour chaque élève."],
+          sessionTemplates,
+          3
+        );
+        break;
+      }
+      default: {
+        diagnosis.main_finding = `Les données offrent une base exploitable : il est possible d'affiner la lecture pédagogique en ${learningField}.`;
+        diagnosis.class_profile = "Le groupe est engagé, il reste à préciser la prochaine marche de progression.";
+        const defaultPriority =
+          teachingPriorities[0] || "Identifier une priorité claire (montée en difficulté, précision, régularité).";
+        diagnosis.priority_hint = defaultPriority;
+        guidance.priority_for_next_session = defaultPriority;
+        guidance.rationale = "Clarifier la priorité rendra la séance suivante plus lisible pour les élèves.";
+        guidance.levers = selectGuidanceItems([], didacticLevers, 3);
+        guidance.next_session_ideas = selectGuidanceItems([], sessionTemplates, 3);
+      }
+    }
+
+    if (diagnosis.main_finding) summarySentences.overview.push(diagnosis.main_finding);
+    if (diagnosis.priority_hint) summarySentences.needs_work.push(diagnosis.priority_hint);
+    if (guidance.priority_for_next_session) summarySentences.next_steps.push(guidance.priority_for_next_session);
+    if (guidance.next_session_ideas?.length) {
+      summarySentences.next_steps.push(guidance.next_session_ideas[0]);
+    }
+
+    return {
+      teachingDiagnosis: diagnosis,
+      nextSessionGuidance: {
+        priority_for_next_session: guidance.priority_for_next_session,
+        rationale: guidance.rationale,
+        teaching_levers: guidance.levers,
+        next_session_ideas: guidance.next_session_ideas,
+        learning_field: guidance.learning_field,
+      },
+      summary_sentences: summarySentences,
+    };
+  }
+
+  function selectGuidanceItems(primary = [], secondary = [], limit = 3) {
+    const combined = [...(primary || []), ...(secondary || [])].filter(Boolean);
+    const seen = new Set();
+    const result = [];
+    for (const entry of combined) {
+      if (seen.has(entry)) continue;
+      seen.add(entry);
+      result.push(entry);
+      if (result.length >= limit) break;
+    }
+    return result;
+  }
+
+  function findComparisonShare(base, needle) {
+    if (!base || !needle) return null;
+    const list = Array.isArray(base.comparisons) ? base.comparisons : [];
+    const target = list.find((entry) => {
+      if (!entry || !entry.label) return false;
+      return entry.label.toLowerCase().includes(needle.toLowerCase());
+    });
+    return Number.isFinite(target?.share) ? target.share : null;
   }
 
   function normalizeKeyName(key) {

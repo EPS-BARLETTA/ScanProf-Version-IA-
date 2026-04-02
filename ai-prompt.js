@@ -234,6 +234,8 @@
       "- Identifie ensuite les stagnations ou fragilités persistantes en t’appuyant sur `stagnations` et `regressions`, puis précise les limites si les données sont partielles.",
       "- Décris la dynamique temporelle du cycle : mentionne ce qui change entre le début et la fin (ex. « moins d’absences », « niveau médian plus élevé »).",
       "- Reformule des suites pédagogiques concrètes à partir de `next_steps`; ajoute-en seulement si elles sont justifiées par les données.",
+      "- Utilise `class_analytics.teaching_diagnosis` pour relier les constats à la lecture pédagogique de l'activité.",
+      "- Appuie-toi sur `class_analytics.next_session_guidance` pour fixer la priorité principale de la prochaine séance et citer les leviers proposés.",
       "- `reperages_eleves` repose exclusivement sur `merged_cycle_analysis.student_profile_sentences`; si aucun profil fiable n’est fourni, renvoie [].",
       "- Les données partielles ne justifient jamais « Aucune information disponible » : base la synthèse sur la continuité du cycle, l'organisation des séances, la qualité de collecte et des améliorations concrètes du suivi.",
       "- Tu peux citer ponctuellement `cycle_bundle.sessions[]` (ex. « Séance 2 ») pour étayer un constat sans recalculer.",
@@ -259,6 +261,10 @@
     const profileHint = pedagogicalRules.hasStudentProfiles
       ? "- Les prénoms cités dans « repérages élèves » proviennent uniquement de `student_profiles` / `student_profile_sentences`."
       : "- Si aucun profil nominatif fiable n'est fourni, renvoie `reperages_eleves: []`.";
+    const teachingDiagnosisHint =
+      "- Appuie-toi sur `class_analytics.teaching_diagnosis` (main_finding, class_profile, priority_hint, evidence) pour formuler la lecture pédagogique et relier chaque constat aux données.";
+    const nextGuidanceHint =
+      "- Reformule `class_analytics.next_session_guidance` (priority_for_next_session, teaching_levers, next_session_ideas) pour préciser la priorité de travail et proposer des suites concrètes.";
     const lines = [
       "Tu es un assistant pédagogique francophone pour des enseignants d'EPS.",
       "SOCLE COMMUN — livrables attendus :",
@@ -277,6 +283,8 @@
       "- Appuie-toi ensuite sur `class_analytics` (context, data_quality, distributions, measures, comparisons, student_groups, pedagogical_signals, limits) pour enrichir l'analyse sans recalculer.",
       "- Exploite `pre_analysis` : restitue `known_facts`, `allowed_comparisons`, `pedagogical_signals`, et mentionne les `unknown_codes` avec prudence.",
       "- Si les données sont partielles, maintiens une lecture utile et prudente plutôt que de répondre « Aucune information disponible ».",
+      teachingDiagnosisHint,
+      nextGuidanceHint,
       "- Chaque champ texte se limite à une phrase simple (≤ 12 mots).",
       "- Chaque liste contient 2 à 4 éléments courts quand une information existe ; sinon renvoie [].",
       "- Utilise les pourcentages et volumes fournis pour formuler « la moitié », « un tiers », « X % » sans extrapoler.",

@@ -55,6 +55,22 @@
         "Mettre en avant les élèves qui complètent tous les ateliers prévus.",
         "Signaler ceux qui restent bloqués sur un même code plusieurs tours.",
       ],
+      learningField: "Cross Training — engagement moteur et gestion prévu/réalisé",
+      teachingPriorities: [
+        "Stabiliser un protocole prévu/réalisé commun pour objectiver la gestion de l’effort.",
+        "Installer une régularité sur les ateliers cardio et renforcement.",
+        "Faire expliciter la stratégie d’intensité entre les tours (dosage, récupération).",
+      ],
+      didacticLevers: [
+        "Tableau collectif prévu/réalisé mis à jour à chaque rotation.",
+        "Binômes observateurs responsables du chronométrage et du relevé.",
+        "Groupes de besoin différenciant charges et temps de récupération.",
+      ],
+      nextSessionTemplates: [
+        "Prévoir un circuit court (4-5 ateliers) avec colonne prévue/réalisé identique pour toute la classe.",
+        "Confier à un binôme par atelier la mesure des écarts avant la rotation suivante.",
+        "Clore la séance par un débrief express où chaque élève annonce un indicateur à améliorer.",
+      ],
     },
     climb_track: {
       id: "climb_track",
@@ -117,6 +133,22 @@
         "En vitesse, baisse nette du temps = progression potentielle.",
         "En bloc, réussite sur couleurs supérieures = progression relative.",
       ],
+      learningField: "Escalade — engagement progressif et lecture de voie",
+      teachingPriorities: [
+        "Amener les élèves à tenter une cotation légèrement supérieure en sécurité.",
+        "Multiplier les essais accompagnés pour clarifier la lecture de voie.",
+        "Valoriser la prise de risque contrôlée plutôt que la seule réussite facile.",
+      ],
+      didacticLevers: [
+        "Groupes de besoin avec contrats d’essais guidés.",
+        "Binômes grimpeur/observateur avec trace rapide (voie, statut, sensation).",
+        "Repères visuels sur les voies cibles (sections clés, repos, clips).",
+      ],
+      nextSessionTemplates: [
+        "Programmer un aller-retour : 1 tentative libre puis 1 tentative guidée sur la cotation supérieure.",
+        "Installer un mur de suivi où chaque binôme note voie tentée / résultat / prochaine cible.",
+        "Imposer un passage découverte sur une voie repère pour mesurer la progression collective.",
+      ],
     },
     arcathlon_v2: {
       id: "arcathlon_v2",
@@ -174,6 +206,22 @@
         "Entrées fréquentes zone 2 mais peu de points = efficacité à améliorer.",
         "Distribution stable nb_10→nb_6 = profil de tir régulier.",
       ],
+      learningField: "ArcAthlon — précision de tir et continuité de l’effort",
+      teachingPriorities: [
+        "Relier les points marqués au potentiel points_max.",
+        "Maintenir la précision après les phases de course.",
+        "Objectiver l’efficacité de la zone 2 (entrées vs points).",
+      ],
+      didacticLevers: [
+        "Lecture partagée des points de référence avant la séquence.",
+        "Défis ciblés zone 2 pour maintenir la précision sous fatigue.",
+        "Tableau synthétique points_total / points_max / indice_arc par binôme.",
+      ],
+      nextSessionTemplates: [
+        "Prévoir deux passages course + tir : un repère, un avec objectif précis sur zone 2 ou points_max.",
+        "Demander à chaque élève de comparer immédiatement points_total et points_max pour situer la marge.",
+        "Clore par un temps calme d’analyse des séries de tir pour fixer la priorité suivante.",
+      ],
     },
     laser_run: {
       id: "laser_run",
@@ -219,6 +267,22 @@
         "Bon indice_tir avec vitesse stable = profil potentiellement équilibré.",
         "Forte dissociation déplacement vs tir = axe de travail prioritaire.",
         "Distance correcte mais tir fragile = accompagnement sur la précision.",
+      ],
+      learningField: "Laser Run — alternance effort/course et précision de tir",
+      teachingPriorities: [
+        "Coordonner la relance course et la stabilité du tir.",
+        "Donner des repères simples sur la qualité des tirs (LED).",
+        "Rendre comparables les boucles successives pour objectiver la régularité.",
+      ],
+      didacticLevers: [
+        "Fiches boucle par boucle (temps, LED, respiration) en binômes.",
+        "Scénarios d’effort différenciés : relance rapide / relance maîtrisée.",
+        "Rituels de respiration ou d’ancrage avant chaque phase de tir.",
+      ],
+      nextSessionTemplates: [
+        "Alterner deux formats : boucle rapide puis boucle maîtrisée en notant les LED pour comparer.",
+        "Mettre en place un tableau simple Distance / Temps / LED pour chaque passage.",
+        "Définir un contrat précis sur les LED (ex. viser 0-1 LED sur les deux derniers tirs).",
       ],
     },
   });
@@ -519,6 +583,16 @@
       examples: Array.isArray(dict.examples) ? dict.examples.filter(Boolean) : [],
       comparison_rules: Array.isArray(dict.comparison_rules) ? dict.comparison_rules.filter(Boolean) : [],
       signal_rules: Array.isArray(dict.signal_rules) ? dict.signal_rules.filter(Boolean) : [],
+      learningField: dict.learningField || dict.learning_field || (dict.meta && dict.meta.learning_field) || "",
+      teachingPriorities: filterStringList(
+        dict.teachingPriorities || dict.teaching_priorities || (dict.meta && dict.meta.teaching_priorities) || []
+      ),
+      didacticLevers: filterStringList(
+        dict.didacticLevers || dict.didactic_levers || (dict.meta && dict.meta.didactic_levers) || []
+      ),
+      nextSessionTemplates: filterStringList(
+        dict.nextSessionTemplates || dict.next_session_templates || (dict.meta && dict.meta.next_session_templates) || []
+      ),
     };
     if (!normalized.id) normalized.id = slugify(normalized.label);
     return normalized;
@@ -549,6 +623,9 @@
       signal_rules: [...(base.signal_rules || []), ...(dict.signal_rules || [])],
       levels: [...(base.levels || []), ...(dict.levels || [])],
       practices: [...(base.practices || []), ...(dict.practices || [])],
+      teachingPriorities: [...(base.teachingPriorities || []), ...(dict.teachingPriorities || [])],
+      didacticLevers: [...(base.didacticLevers || []), ...(dict.didacticLevers || [])],
+      nextSessionTemplates: [...(base.nextSessionTemplates || []), ...(dict.nextSessionTemplates || [])],
     });
     delete merged.inherit;
     source[key] = merged;
