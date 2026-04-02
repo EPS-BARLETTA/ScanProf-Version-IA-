@@ -52,6 +52,26 @@
     .ai-summary-item{display:flex;flex-direction:column;gap:2px;}
     .ai-summary-label{font-size:0.75rem;color:var(--sp-muted);}
     .ai-summary-value{font-size:0.95rem;font-weight:600;}
+    .ai-panel-card{border:1px solid var(--sp-border);border-radius:14px;padding:14px;margin-top:12px;background:var(--sp-surface);box-shadow:var(--sp-card-shadow);}
+    .ai-panel-card summary{cursor:pointer;font-weight:600;list-style:none;display:flex;align-items:center;gap:8px;}
+    .ai-panel-card summary::-webkit-details-marker{display:none;}
+    .ai-panel-card__header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;}
+    .ai-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:var(--sp-table-even);font-size:0.8rem;color:var(--sp-muted);}
+    .ai-segmented{display:flex;gap:8px;flex-wrap:wrap;}
+    .ai-segmented--wrap{flex-wrap:wrap;}
+    .ai-segmented--compact .ai-pill{flex:1 1 calc(50% - 6px);}
+    .ai-pill{flex:1 1 auto;display:flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--sp-border);border-radius:999px;padding:6px 10px;font-size:0.85rem;cursor:pointer;background:var(--sp-table-even);color:var(--sp-text);transition:background .15s ease,border-color .15s ease;}
+    .ai-pill input{display:none;}
+    .ai-pill span{pointer-events:none;}
+    .ai-pill:has(input:checked){background:var(--sp-primary);border-color:var(--sp-primary);color:#fff;}
+    .ai-pill:has(input:checked) span{color:#fff;font-weight:600;}
+    .ai-context-box{border:1px dashed var(--sp-border);border-radius:12px;padding:10px;margin-top:8px;background:var(--sp-table-even);}
+    .ai-context-note{font-size:0.85rem;color:var(--sp-muted);margin-top:6px;}
+    .ai-secondary{background:var(--sp-table-even);}
+    .ai-reperage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:6px 0 0;}
+    .ai-reperage-card{border:1px solid var(--sp-border);border-radius:12px;padding:10px;background:var(--sp-surface);}
+    .ai-reperage-card strong{display:block;margin-bottom:4px;font-size:0.85rem;color:var(--sp-muted);}
+    .ai-reperage-card ul{margin:0;padding-left:18px;}
     .ai-field{display:flex;flex-direction:column;gap:6px;font-size:0.9rem;}
     .ai-field input,
     .ai-field textarea,
@@ -236,7 +256,7 @@
         </div>
         <button type="button" class="ai-drawer__close" id="ai-drawer-close">✖</button>
       </div>
-      <button type="button" class="ai-btn text" id="ai-test-key-btn">Tester la connexion</button>
+
       <div class="ai-summary">
         <div class="ai-summary-item">
           <span class="ai-summary-label">Classe</span>
@@ -251,68 +271,133 @@
           <span class="ai-summary-value" id="ai-summary-types">—</span>
         </div>
       </div>
-      <label class="ai-field">Clé API personnelle
-        <div class="ai-input-row">
+
+      <details class="ai-panel-card" id="ai-settings-panel">
+        <summary>⚙️ Paramètres IA</summary>
+        <label class="ai-field">Clé API personnelle
           <input type="password" id="ai-api-key" placeholder="Ex : sk-... ou AIza-...">
+        </label>
+        <div class="ai-input-row">
           <button type="button" class="ai-btn outline" id="ai-save-key-btn">Enregistrer</button>
           <button type="button" class="ai-btn danger" id="ai-delete-key-btn">Supprimer</button>
+          <button type="button" class="ai-btn outline" id="ai-test-key-btn">Tester la connexion</button>
         </div>
-      </label>
-      <div class="ai-status" id="ai-key-status"></div>
-      <label class="ai-field">Notes / contexte (optionnel)
-        <textarea id="ai-session-notes" placeholder="Objectifs, météo, faits marquants..."></textarea>
-      </label>
-      <details class="ai-field ai-interpretation">
-        <summary>🛈 Abréviations / consignes de lecture (optionnel)</summary>
+        <div class="ai-status" id="ai-key-status"></div>
+        <p class="ai-panel__note" id="ai-key-state">Aucune clé enregistrée.</p>
+      </details>
+
+      <section class="ai-panel-card">
+        <h3>Type d’analyse</h3>
+        <div class="ai-segmented" id="ai-type-switch">
+          <label class="ai-pill">
+            <input type="radio" name="ai-analysis" value="session" checked>
+            <span>Séance</span>
+          </label>
+          <label class="ai-pill">
+            <input type="radio" name="ai-analysis" value="cycle">
+            <span>Cycle</span>
+          </label>
+          <label class="ai-pill">
+            <input type="radio" name="ai-analysis" value="student">
+            <span>Élève</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="ai-panel-card">
+        <div class="ai-panel-card__header">
+          <h3>Base de lecture</h3>
+          <span class="ai-chip" id="ai-base-indicator">Lecture actuelle : Auto</span>
+        </div>
+        <div class="ai-segmented ai-segmented--wrap" id="ai-base-switch">
+          <label class="ai-pill">
+            <input type="radio" name="ai-base" value="auto" checked>
+            <span>Auto</span>
+          </label>
+          <label class="ai-pill">
+            <input type="radio" name="ai-base" value="climb_track">
+            <span>Climb Track</span>
+          </label>
+          <label class="ai-pill">
+            <input type="radio" name="ai-base" value="cross_training">
+            <span>Cross Training</span>
+          </label>
+          <label class="ai-pill">
+            <input type="radio" name="ai-base" value="arcathlon_v2">
+            <span>ArcAthlon V2</span>
+          </label>
+          <label class="ai-pill">
+            <input type="radio" name="ai-base" value="laser_run">
+            <span>Laser Run</span>
+          </label>
+        </div>
+        <div class="ai-dictionary-hint ai-dictionary-hint--empty" id="ai-dictionary-hint">Chargement du référentiel en cours...</div>
+        <div class="ai-dictionary-alert sp-hidden" id="ai-dictionary-alert"></div>
+        <button type="button" class="ai-btn text" id="ai-open-dictionary-inline">📘 Gérer les référentiels</button>
+      </section>
+
+      <section class="ai-panel-card">
+        <h3>Paramètres contextuels</h3>
+        <div class="ai-context-box" id="ai-context-session">
+          <p id="ai-context-session-text">Aucun élève chargé pour cette séance.</p>
+        </div>
+        <div class="ai-context-box sp-hidden" id="ai-context-cycle">
+          <p id="ai-context-cycle-text">Cycle en attente de séances retenues.</p>
+          <div class="ai-context-note sp-hidden" id="ai-cycle-warning"></div>
+          <div class="ai-cycle-diagnostics sp-hidden" id="ai-cycle-diagnostics">
+            <strong>Diagnostics cycle</strong>
+            <ul id="ai-cycle-diagnostics-list"></ul>
+          </div>
+        </div>
+        <div class="ai-context-box sp-hidden" id="ai-context-student">
+          <label class="ai-field">Choisir un élève
+            <select id="ai-student-select" disabled>
+              <option value="">Aucun élève disponible</option>
+            </select>
+          </label>
+          <div class="ai-segmented ai-segmented--compact" id="ai-student-scope">
+            <label class="ai-pill">
+              <input type="radio" name="ai-student-scope" value="session" checked>
+              <span>Sur la séance</span>
+            </label>
+            <label class="ai-pill">
+              <input type="radio" name="ai-student-scope" value="cycle">
+              <span>Sur le cycle</span>
+            </label>
+          </div>
+          <p class="ai-context-note" id="ai-context-student-note">Choisissez un élève puis la période à analyser.</p>
+          <div class="ai-status" id="ai-student-status"></div>
+        </div>
+      </section>
+
+      <details class="ai-panel-card ai-secondary" id="ai-notes-panel">
+        <summary>📝 Notes & contexte</summary>
+        <label class="ai-field">Notes enseignant
+          <textarea id="ai-session-notes" placeholder="Objectifs, météo, faits marquants..."></textarea>
+        </label>
+      </details>
+
+      <details class="ai-panel-card ai-secondary">
+        <summary>📘 Abréviations / consignes</summary>
         <textarea id="ai-interpretation-notes" placeholder="Ex : bu = burpees ; cr = crunch ; V = voie ; P = pénalité"></textarea>
         <p class="ai-panel__note">Ces indications restent sur cet appareil et aident ponctuellement l’IA.</p>
       </details>
-      <div class="ai-dictionary-hint ai-dictionary-hint--empty" id="ai-dictionary-hint">Chargement du référentiel en cours...</div>
-      <div class="ai-dictionary-alert sp-hidden" id="ai-dictionary-alert"></div>
-      <div class="ai-field">
-        <label for="ai-student-select">Bilan élève (local)</label>
-        <select id="ai-student-select" disabled>
-          <option value="">Aucun élève disponible</option>
-        </select>
-        <div class="ai-input-row">
-          <button type="button" class="ai-btn outline" id="ai-student-session-btn" disabled>🧑‍🏫 Séance</button>
-          <button type="button" class="ai-btn outline" id="ai-student-cycle-btn" disabled>🔁 Cycle</button>
-        </div>
-        <p class="ai-panel__note">Calcul local sans requête IA (cycle à partir de 2 séances retenues).</p>
-      </div>
-      <div class="ai-status" id="ai-student-status"></div>
-      <div class="ai-actions-grid">
-        <button type="button" class="ai-btn primary" id="ai-action-assistant">
-          🚀 Analyser la séance
-        </button>
-      </div>
-      <div class="ai-mode-indicator" id="ai-mode-indicator">Mode IA : séance</div>
-      <div class="ai-mode-indicator ai-mode-indicator--sub sp-hidden" id="ai-dictionary-indicator"></div>
-      <div class="ai-mode-indicator ai-mode-indicator--warning sp-hidden" id="ai-cycle-warning">Cycle non activé</div>
-      <div class="ai-cycle-diagnostics sp-hidden" id="ai-cycle-diagnostics">
-        <strong>Diagnostics cycle</strong>
-        <ul id="ai-cycle-diagnostics-list"></ul>
-      </div>
-      <button type="button" class="ai-btn outline" id="ai-open-dictionary-inline">
-        📘 Gérer le référentiel
-      </button>
-      <div class="ai-status" id="ai-run-status"></div>
-      <div class="ai-question">
-        <label class="ai-field">Poser une question sur la séance
+
+      <details class="ai-panel-card ai-secondary">
+        <summary>🗨️ Poser une question</summary>
+        <label class="ai-field">Votre question
           <textarea id="ai-question-input" placeholder="Ex : Quels élèves sont les plus en difficulté ?"></textarea>
         </label>
-        <div class="ai-question-suggestions">
-          <span>Idées :</span>
-          <button type="button" class="ai-question-suggestion" data-question="Quels élèves sont en difficulté ?">Élèves en difficulté</button>
-          <button type="button" class="ai-question-suggestion" data-question="Quel exercice pose problème ?">Exercice qui pose problème</button>
-          <button type="button" class="ai-question-suggestion" data-question="Qui progresse le plus ?">Qui progresse ?</button>
-          <button type="button" class="ai-question-suggestion" data-question="Comment adapter la séance suivante ?">Adapter la séance suivante</button>
-        </div>
         <div class="ai-question-actions">
-          <button type="button" class="ai-btn outline" id="ai-question-btn">Poser la question</button>
+          <button type="button" class="ai-btn outline" id="ai-question-btn">Envoyer la question</button>
         </div>
         <div class="ai-status" id="ai-question-status"></div>
-      </div>
+      </details>
+
+      <button type="button" class="ai-btn primary ai-run-btn" id="ai-run-btn">🚀 Analyser</button>
+      <div class="ai-status" id="ai-run-status"></div>
+      <div class="ai-mode-indicator" id="ai-mode-indicator">Type d’analyse : Séance</div>
+      <div class="ai-mode-indicator ai-mode-indicator--sub sp-hidden" id="ai-dictionary-indicator"></div>
     </aside>
   </div>
 
@@ -322,7 +407,7 @@
         <div>
           <strong id="ai-modal-title">Assistant IA</strong>
           <div id="ai-modal-subtitle" style="font-size:0.9rem;color:var(--sp-muted);"></div>
-          <div id="ai-modal-mode-indicator" class="ai-mode-indicator ai-mode-indicator--inline">Mode IA : séance</div>
+          <div id="ai-modal-mode-indicator" class="ai-mode-indicator ai-mode-indicator--inline">Type d’analyse : Séance</div>
           <div id="ai-modal-dictionary-indicator" class="ai-mode-indicator ai-mode-indicator--inline ai-mode-indicator--sub sp-hidden"></div>
         </div>
         <button type="button" class="ai-modal__close" id="ai-modal-close">✖</button>

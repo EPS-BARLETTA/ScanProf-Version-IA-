@@ -7,6 +7,7 @@
     INTERPRETATION: "scanprof_ai_interpretation_hints",
     MANUAL_DICTIONARIES: "scanprof_ai_manual_dictionary_map",
     AUTO_DICTIONARIES: "scanprof_ai_auto_dictionary_map",
+    BASE_PREF: "scanprof_ai_base_preference",
   };
   const AI_CONTEXT_KEY = "scanprof_ai_context";
   const PROVIDERS = {
@@ -122,6 +123,36 @@
       "Poursuivre le cycle en notant des indicateurs réguliers séance après séance.",
     ],
   };
+  const ANALYSIS_MODES = {
+    session: "session",
+    cycle: "cycle",
+    student: "student",
+  };
+  const STUDENT_SCOPES = {
+    session: "session",
+    cycle: "cycle",
+  };
+  const BASE_READING_OPTIONS = {
+    auto: null,
+    climb_track: "climb_track",
+    cross_training: "cross_training",
+    arcathlon_v2: "arcathlon_v2",
+    laser_run: "laser_run",
+  };
+  const BASE_READING_LABELS = {
+    auto: "Auto",
+    climb_track: "Climb Track",
+    cross_training: "Cross Training",
+    arcathlon_v2: "ArcAthlon V2",
+    laser_run: "Laser Run",
+  };
+  const ANALYSIS_MODE_STORAGE_KEY = "scanprof_ai_analysis_mode";
+  const BASE_SCOPE_FALLBACK_KEY = "__default__";
+  const FRIENDLY_ERROR_COOLDOWN_MS = 3500;
+  const STUDENT_HISTORY_LIMIT_SAFE =
+    typeof window !== "undefined" && typeof window.STUDENT_HISTORY_LIMIT === "number"
+      ? window.STUDENT_HISTORY_LIMIT
+      : 8;
 
   let refs = {};
   let lastReportText = "";
@@ -136,6 +167,11 @@
   let lastCycleDiagnostics = { totalCandidates: 0, retained: 0, rejections: [] };
   let cycleRejectionLog = [];
   let studentDirectory = new Map();
+  let selectedAnalysisMode = ANALYSIS_MODES.session;
+  let selectedStudentScope = STUDENT_SCOPES.session;
+  let selectedBase = "auto";
+  let lastBaseScopeKey = "";
+  let lastFriendlyErrorAt = 0;
 
   document.addEventListener("DOMContentLoaded", initAssistant);
 
@@ -265,6 +301,230 @@
     const api = window.ScanProfAIDictionaries;
     if (!api || typeof api.getDictionaryById !== "function") return null;
     return api.getDictionaryById(id);
+  }
+
+  function resolveDictionarySourceTag({ forcedDictionary, manualEntry, baseApplied, autoDictionary, dictionary }) {
+    if (forcedDictionary) return "forced";
+    if (manualEntry) return "manual";
+    if (baseApplied) return "base-preference";
+    if (autoDictionary) return "auto";
+    return dictionary?.source || "default";
+  }
+
+  function loadBasePreferenceMap() {
+    try {
+      const raw = localStorage.getItem(STORAGE.BASE_PREF);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveBasePreferenceMap(map) {
+    try {
+      localStorage.setItem(STORAGE.BASE_PREF, JSON.stringify(map || {}));
+    } catch {
+      /* noop */
+    }
+  }
+
+  function getBasePreferenceKey(context = {}) {
+    const key = getContextScopeKey(context || {});
+    return key || BASE_SCOPE_FALLBACK_KEY;
+  }
+
+  function getStoredBasePreference(context = {}) {
+    const map = loadBasePreferenceMap();
+    const key = getBasePreferenceKey(context);
+    return map[key] || "auto";
+  }
+
+  function rememberBasePreferenceForContext(baseValue = "auto") {
+    const context = getActiveScopeContext();
+    const key = getBasePreferenceKey(context);
+    const map = loadBasePreferenceMap();
+    lastBaseScopeKey = key;
+    if (!baseValue || baseValue === "auto") delete map[key];
+    else map[key] = baseValue;
+    saveBasePreferenceMap(map);
+  }
+
+  function getActiveScopeContext() {
+    if (currentContext && (currentContext.className || currentContext.activityName)) {
+      return {
+        classe: currentContext.className || currentContext.storedContext?.classe || "",
+        activite: currentContext.activityName || currentContext.storedContext?.activite || "",
+        datasetSignature: currentContext.storedContext?.datasetSignature || "",
+      };
+    }
+    const storedContext = getStoredAIContext();
+    return storedContext || {};
+  }
+
+  function syncBasePreferenceWithContext(force = false) {
+    const context = getActiveScopeContext();
+    const key = getBasePreferenceKey(context);
+    if (!force && key === lastBaseScopeKey) {
+      updateBaseIndicator();
+      return;
+    }
+    lastBaseScopeKey = key;
+    const storedValue = getStoredBasePreference(context);
+    setBasePreference(storedValue, { persist: false, updateInputs: true });
+  }
+
+  function setBasePreference(value, { persist = false, updateInputs = true } = {}) {
+    const normalized = BASE_READING_OPTIONS[value] ? value : "auto";
+    selectedBase = normalized;
+    if (updateInputs) syncBaseInputs(normalized);
+    updateBaseIndicator();
+    updateDictionaryIndicators();
+    if (persist) {
+      rememberBasePreferenceForContext(normalized);
+    }
+  }
+
+  function syncBaseInputs(baseValue) {
+    if (!refs.baseInputs) return;
+    refs.baseInputs.forEach((input) => {
+      if (!input) return;
+      input.checked = input.value === baseValue;
+    });
+  }
+
+  function updateBaseIndicator() {
+    if (!refs.baseIndicator) return;
+    const label = BASE_READING_LABELS[selectedBase] || BASE_READING_LABELS.auto;
+    const suffix = selectedBase === "auto" ? "" : " (choisie)";
+    refs.baseIndicator.textContent = `Lecture actuelle : ${label}${suffix}`;
+  }
+
+  function getBaseReadingSnapshot() {
+    return {
+      value: selectedBase,
+      label: BASE_READING_LABELS[selectedBase] || BASE_READING_LABELS.auto,
+    };
+  }
+
+  function getPreferredBaseDictionary(context = {}) {
+    const baseKey =
+      selectedBase && selectedBase !== "auto" ? selectedBase : getStoredBasePreference(context || getActiveScopeContext());
+    if (!baseKey || baseKey === "auto") return null;
+    const dictionaryId = BASE_READING_OPTIONS[baseKey];
+    if (!dictionaryId) return null;
+    return getDictionaryByIdSafe(dictionaryId);
+  }
+
+  function setAnalysisMode(mode) {
+    const normalized = Object.values(ANALYSIS_MODES).includes(mode) ? mode : ANALYSIS_MODES.session;
+    if (selectedAnalysisMode === normalized) {
+      updateContextVisibility();
+      updateModeIndicators();
+      return;
+    }
+    selectedAnalysisMode = normalized;
+    syncAnalysisModeInputs(normalized);
+    updateContextVisibility();
+    updatePrimaryButtonState();
+    updateModeIndicators();
+  }
+
+  function formatAnalysisModeLabel(mode) {
+    switch (mode) {
+      case ANALYSIS_MODES.cycle:
+        return "Cycle";
+      case ANALYSIS_MODES.student:
+        return "Élève";
+      default:
+        return "Séance";
+    }
+  }
+
+  function syncAnalysisModeInputs(mode) {
+    if (!refs.analysisModeInputs) return;
+    refs.analysisModeInputs.forEach((input) => {
+      if (!input) return;
+      input.checked = input.value === mode;
+    });
+  }
+
+  function rememberAnalysisModePreference() {
+    try {
+      localStorage.setItem(ANALYSIS_MODE_STORAGE_KEY, selectedAnalysisMode);
+    } catch {
+      /* noop */
+    }
+  }
+
+  function restoreAnalysisModePreference() {
+    let stored = null;
+    try {
+      stored = localStorage.getItem(ANALYSIS_MODE_STORAGE_KEY);
+    } catch {
+      stored = null;
+    }
+    setAnalysisMode(Object.values(ANALYSIS_MODES).includes(stored) ? stored : ANALYSIS_MODES.session);
+  }
+
+  function updateContextVisibility() {
+    const visibility = {
+      session: selectedAnalysisMode === ANALYSIS_MODES.session,
+      cycle: selectedAnalysisMode === ANALYSIS_MODES.cycle,
+      student: selectedAnalysisMode === ANALYSIS_MODES.student,
+    };
+    Object.entries(refs.contextBoxes || {}).forEach(([key, element]) => {
+      if (!element) return;
+      element.classList.toggle("sp-hidden", !visibility[key]);
+    });
+    if (refs.cycleDiagnostics) {
+      refs.cycleDiagnostics.classList.toggle("sp-hidden", selectedAnalysisMode !== ANALYSIS_MODES.cycle);
+    }
+  }
+
+  function updatePrimaryButtonState() {
+    if (!refs.runBtn) return;
+    const summary = summarizeDataset();
+    if (selectedAnalysisMode === ANALYSIS_MODES.student) {
+      const hasSelection = Boolean(refs.studentSelect && refs.studentSelect.value);
+      const hasOptions = studentDirectory.size > 0;
+      const disabled = !hasOptions || !hasSelection;
+      refs.runBtn.disabled = disabled;
+      refs.runBtn.title = disabled ? "Choisissez un élève et un mode pour lancer le bilan." : "";
+      return;
+    }
+    const hasEntries = summary.total > 0;
+    refs.runBtn.disabled = !hasEntries;
+    refs.runBtn.title = hasEntries ? "" : "Ajoutez des élèves pour lancer l’analyse.";
+  }
+
+  function attachGlobalErrorHandlers() {
+    window.addEventListener(
+      "error",
+      (event) => {
+        if (!event) return;
+        handleGlobalIssue(event.message || "");
+      },
+      true
+    );
+    window.addEventListener(
+      "unhandledrejection",
+      (event) => {
+        handleGlobalIssue(event?.reason?.message || event?.reason || "");
+      },
+      true
+    );
+  }
+
+  function handleGlobalIssue(message) {
+    if (!message) return;
+    const now = Date.now();
+    if (now - lastFriendlyErrorAt < FRIENDLY_ERROR_COOLDOWN_MS) return;
+    lastFriendlyErrorAt = now;
+    if (refs.runStatus) {
+      setStatus(refs.runStatus, "Un imprévu technique est survenu. Consultez la console pour le détail.", "error");
+    }
   }
 
   function getContextScopeKey(context = {}) {
@@ -530,6 +790,7 @@
       dictionaryHint: document.getElementById("ai-dictionary-hint"),
       keyStatus: document.getElementById("ai-key-status"),
       runStatus: document.getElementById("ai-run-status"),
+      runBtn: document.getElementById("ai-run-btn"),
       questionInput: document.getElementById("ai-question-input"),
       questionBtn: document.getElementById("ai-question-btn"),
       questionStatus: document.getElementById("ai-question-status"),
@@ -537,6 +798,7 @@
       summaryCount: document.getElementById("ai-summary-count"),
       summaryTypes: document.getElementById("ai-summary-types"),
       studentSelect: document.getElementById("ai-student-select"),
+      studentScopeInputs: document.querySelectorAll('input[name="ai-student-scope"]'),
       studentSessionBtn: document.getElementById("ai-student-session-btn"),
       studentCycleBtn: document.getElementById("ai-student-cycle-btn"),
       studentStatus: document.getElementById("ai-student-status"),
@@ -545,6 +807,20 @@
       cycleWarning: document.getElementById("ai-cycle-warning"),
       cycleDiagnostics: document.getElementById("ai-cycle-diagnostics"),
       cycleDiagnosticsList: document.getElementById("ai-cycle-diagnostics-list"),
+      settingsPanel: document.getElementById("ai-settings-panel"),
+      keyStateNote: document.getElementById("ai-key-state"),
+      analysisModeInputs: document.querySelectorAll('input[name="ai-analysis"]'),
+      baseInputs: document.querySelectorAll('input[name="ai-base"]'),
+      baseIndicator: document.getElementById("ai-base-indicator"),
+      contextBoxes: {
+        session: document.getElementById("ai-context-session"),
+        cycle: document.getElementById("ai-context-cycle"),
+        student: document.getElementById("ai-context-student"),
+      },
+      contextTexts: {
+        session: document.getElementById("ai-context-session-text"),
+        cycle: document.getElementById("ai-context-cycle-text"),
+      },
       actionButtons: {
         assistant: document.getElementById("ai-action-assistant"),
         bilan: document.getElementById("ai-action-bilan"),
@@ -573,9 +849,12 @@
     loadStoredSettings();
     bindEvents();
     setupDictionaryHint();
+    updateBaseIndicator();
+    restoreAnalysisModePreference();
     updateSummaryUI();
     checkPendingCycleTrigger();
     updateModeIndicators();
+    attachGlobalErrorHandlers();
     const eventName = (window.ScanProfParticipants && window.ScanProfParticipants.eventName) || "scanprof:dataset-changed";
     document.addEventListener(eventName, () => updateSummaryUI());
   }
@@ -584,6 +863,7 @@
     refs.saveBtn?.addEventListener("click", saveApiKey);
     refs.deleteBtn?.addEventListener("click", deleteApiKey);
     refs.testBtn?.addEventListener("click", testConnection);
+     refs.runBtn?.addEventListener("click", handlePrimaryAction);
     refs.actionButtons?.assistant?.addEventListener("click", () => handleAnalysis("bilan"));
     refs.actionButtons?.bilan?.addEventListener("click", () => handleAnalysis("bilan"));
     refs.actionButtons?.difficulte?.addEventListener("click", () => handleAnalysis("difficulte"));
@@ -594,6 +874,21 @@
     refs.notesField?.addEventListener("input", handleNotesChange);
     refs.interpretationField?.addEventListener("input", handleInterpretationChange);
     refs.apiKeyInput?.addEventListener("change", handleKeyInputChange);
+    refs.analysisModeInputs?.forEach((input) => {
+      input.addEventListener("change", () => {
+        if (input.checked) handleAnalysisModeChange(input.value);
+      });
+    });
+    refs.baseInputs?.forEach((input) => {
+      input.addEventListener("change", () => {
+        if (input.checked) handleBaseSelectionChange(input.value);
+      });
+    });
+    refs.studentScopeInputs?.forEach((input) => {
+      input.addEventListener("change", () => {
+        if (input.checked) updateStudentScope(input.value);
+      });
+    });
     refs.openBtn?.addEventListener("click", () => toggleDrawer(true));
     refs.drawerClose?.addEventListener("click", () => toggleDrawer(false));
     refs.drawerBackdrop?.addEventListener("click", (event) => {
@@ -620,7 +915,53 @@
     }
     refs.studentSessionBtn?.addEventListener("click", () => handleStudentAnalysis("session"));
     refs.studentCycleBtn?.addEventListener("click", () => handleStudentAnalysis("cycle"));
-    refs.studentSelect?.addEventListener("change", () => setStatus(refs.studentStatus, "", "info"));
+    refs.studentSelect?.addEventListener("change", () => {
+      setStatus(refs.studentStatus, "", "info");
+      updatePrimaryButtonState();
+    });
+  }
+
+  function handlePrimaryAction() {
+    if (selectedAnalysisMode === ANALYSIS_MODES.student) {
+      handleStudentAnalysis(selectedStudentScope);
+      return;
+    }
+    if (selectedAnalysisMode === ANALYSIS_MODES.cycle) {
+      const diagnostics = getCycleDiagnostics();
+      let retained = diagnostics.retained || 0;
+      if (retained < CYCLE_MIN_SESSIONS_FOR_FALLBACK) {
+        const rawSessions = collectCycleSessions();
+        retained = Math.max(retained, Array.isArray(rawSessions) ? rawSessions.length : 0);
+      }
+      if (retained < CYCLE_MIN_SESSIONS_FOR_FALLBACK) {
+        const needed = Math.max(CYCLE_MIN_SESSIONS_FOR_FALLBACK - retained, 1);
+        const message =
+          retained === 0
+            ? "Cycle indisponible : au moins deux séances retenues sont nécessaires."
+            : `Cycle incomplet : ajoutez encore ${needed} séance${needed > 1 ? "s" : ""} retenue${needed > 1 ? "s" : ""}.`;
+        setStatus(refs.runStatus, message, "error");
+        updateModeIndicators();
+        return;
+      }
+    }
+    handleAnalysis("bilan");
+  }
+
+  function handleAnalysisModeChange(value) {
+    setAnalysisMode(value || ANALYSIS_MODES.session);
+    rememberAnalysisModePreference();
+  }
+
+  function handleBaseSelectionChange(value) {
+    setBasePreference(value || "auto", { persist: true });
+  }
+
+  function updateStudentScope(value) {
+    if (!value || !Object.values(STUDENT_SCOPES).includes(value)) {
+      selectedStudentScope = STUDENT_SCOPES.session;
+      return;
+    }
+    selectedStudentScope = value;
   }
 
   function setupDictionaryHint() {
@@ -757,8 +1098,19 @@
       if (storedKey) {
         setStatus(refs.keyStatus, "Clé chargée.", "success");
       }
+      syncSettingsPanelState(Boolean(storedKey));
     } catch {
       setStatus(refs.keyStatus, "Impossible de charger la clé enregistrée.", "error");
+      syncSettingsPanelState(false);
+    }
+  }
+
+  function syncSettingsPanelState(hasKey) {
+    if (!refs.settingsPanel) return;
+    if (hasKey) refs.settingsPanel.removeAttribute("open");
+    else refs.settingsPanel.setAttribute("open", "");
+    if (refs.keyStateNote) {
+      refs.keyStateNote.textContent = hasKey ? "Clé enregistrée" : "Aucune clé enregistrée.";
     }
   }
 
@@ -822,6 +1174,7 @@
       const inferred = inferProviderFromKey(value);
       setProvider(inferred);
       setStatus(refs.keyStatus, "Clé enregistrée (stockée localement).", "success");
+      syncSettingsPanelState(true);
     } catch {
       setStatus(refs.keyStatus, "Stockage impossible (quota localStorage atteint ?).", "error");
     }
@@ -835,6 +1188,7 @@
     }
     if (refs.apiKeyInput) refs.apiKeyInput.value = "";
     setStatus(refs.keyStatus, "Clé supprimée de cet appareil.", "success");
+    syncSettingsPanelState(false);
   }
 
   async function testConnection() {
@@ -894,13 +1248,21 @@
       const autoDictionary = getActivityDictionary(currentContext.activityName || storedContext.activite || "");
       const manualEntry = getManualDictionaryEntry(storedContext);
       const manualDictionary = manualEntry?.dictionary || null;
+      const baseDictionary = forcedDictionary || manualDictionary ? null : getPreferredBaseDictionary(storedContext);
       logDebug("Dictionary detection state", {
         storedActivity: storedContext.activite || null,
         manualDictionaryId: manualEntry?.dictionaryId || null,
         autoDictionaryId: autoDictionary?.id || null,
       });
       rememberAutoDictionary(storedContext, autoDictionary);
-      const dictionaryToUse = forcedDictionary || manualDictionary || autoDictionary;
+      const dictionaryToUse = forcedDictionary || manualDictionary || baseDictionary || autoDictionary;
+      const dictionarySource = forcedDictionary
+        ? "cycle-forced"
+        : manualEntry
+        ? "manual"
+        : baseDictionary
+        ? "base-preference"
+        : dictionaryToUse?.source || "auto";
       logDebug("Dictionary to use", { id: dictionaryToUse?.id || null, label: dictionaryToUse?.label || null });
       const retentionPlan = buildColumnRetentionPlan(summary.columns || [], dictionaryToUse, manualInterpretation);
       const sliced = dataset.slice(0, MAX_ELEVES).map((entry) => cleanEntry(entry, retentionPlan));
@@ -933,12 +1295,14 @@
         cycleAnalysis: null,
         isCycle: false,
         cycleSessionCount: 0,
+        baseReading: getBaseReadingSnapshot(),
+        analysisMode: selectedAnalysisMode,
       };
       if (dictionaryToUse) {
         currentContext.dictionaryInfo = {
           id: dictionaryToUse.id,
           label: dictionaryToUse.label || dictionaryToUse.id || "Activité",
-          source: forcedDictionary ? "cycle-forced" : manualEntry ? "manual" : dictionaryToUse.source || "default",
+          source: dictionarySource || "default",
           manualDictionaryId: manualEntry?.dictionaryId || null,
           manualLabel: manualEntry?.dictionary?.label || manualEntry?.label || null,
           autoDictionaryId: autoDictionary?.id || null,
@@ -1075,6 +1439,8 @@
         class_analytics: classAnalytics,
         session_bundle: sessionBundle,
         cycle_bundle: cycleBundle,
+        analysis_mode: selectedAnalysisMode,
+        base_reading: currentContext.baseReading,
       };
       console.info("[ScanProf IA] cycle_bundle present", analysisInput.cycle_bundle);
       console.info("[ScanProf IA] session_bundle present", analysisInput.session_bundle);
@@ -1082,7 +1448,7 @@
       if (!builder || typeof builder.buildPrompt !== "function") {
         throw new Error("Module de prompt introuvable.");
       }
-      const { messages, schema } = builder.buildPrompt({ analysisInput, mode: intent });
+      const { messages, schema } = builder.buildPrompt({ analysisInput, mode: intent, analysisMode: selectedAnalysisMode });
       logDebug("Prompt built", {
         intent,
         schemaKeys: schema.map((section) => section.key),
@@ -1163,6 +1529,9 @@
     if (totalEntries > usedEntries) {
       info.tronque = `Seuls ${usedEntries} élèves sur ${totalEntries} ont été envoyés pour limiter la taille du prompt.`;
     }
+    const modeDemande = currentContext?.analysisMode || selectedAnalysisMode;
+    info.mode_demande = modeDemande;
+    info.base_lecture = currentContext?.baseReading || getBaseReadingSnapshot();
     return info;
   }
 
@@ -1606,17 +1975,20 @@
 
   function renderSection(label, value) {
     const safeLabel = escapeHtml(label);
-    const content = formatValueAsHtml(value);
+    const content = formatValueAsHtml(value, label);
     const icon = SECTION_ICONS[label] || "📌";
     return `<article class="ai-modal__section"><div class="ai-modal__section-header"><span class="ai-result-icon">${icon}</span><h3>${safeLabel}</h3></div>${content}</article>`;
   }
 
-  function formatValueAsHtml(value) {
+  function formatValueAsHtml(value, label = "") {
     if (!value && value !== 0) {
       return `<p>${EMPTY_SECTION_TEXT}</p>`;
     }
     if (Array.isArray(value)) {
       if (!value.length) return `<p>${EMPTY_SECTION_TEXT}</p>`;
+      if (label === "Repérages élèves") {
+        return renderStudentHighlightCards(value);
+      }
       const items = value
         .map((entry) => `<li>${escapeHtml(typeof entry === "string" ? entry : JSON.stringify(entry))}</li>`)
         .join("");
@@ -1630,6 +2002,32 @@
     }
     const str = String(value);
     return `<p>${escapeHtml(str).replace(/\n{2,}/g, "<br><br>").replace(/\n/g, "<br>")}</p>`;
+  }
+
+  function renderStudentHighlightCards(entries = []) {
+    const groups = {};
+    entries.forEach((rawEntry) => {
+      const text = typeof rawEntry === "string" ? rawEntry : valueToPlainText(rawEntry);
+      if (!text) return;
+      const separatorIndex = text.indexOf(":");
+      if (separatorIndex === -1) {
+        groups.Autres = groups.Autres || [];
+        groups.Autres.push(text.trim());
+        return;
+      }
+      const label = text.slice(0, separatorIndex).trim() || "Repérage";
+      const content = text.slice(separatorIndex + 1).trim() || "";
+      if (!groups[label]) groups[label] = [];
+      groups[label].push(content || text);
+    });
+    const cards = Object.entries(groups).map(([category, items]) => {
+      const bulletItems = items
+        .slice(0, 4)
+        .map((item) => `<li>${escapeHtml(item)}</li>`)
+        .join("");
+      return `<div class="ai-reperage-card"><strong>${escapeHtml(category)}</strong><ul>${bulletItems}</ul></div>`;
+    });
+    return `<div class="ai-reperage-grid">${cards.join("")}</div>`;
   }
 
   function buildLocalSectionOverrides() {
@@ -2040,7 +2438,21 @@
       refs.openBtn.disabled = !hasData;
       refs.openBtn.title = hasData ? "" : "Ajoutez des élèves pour utiliser l’analyse IA";
     }
+    if (refs.contextTexts?.session) {
+      if (summary.total > 0) {
+        const sessionLabel = storedContext.seance || meta.sessionName || "Séance en cours";
+        const classLabel = prominentClass || "Classe";
+        refs.contextTexts.session.textContent = `${classLabel} • ${summary.total} élève${
+          summary.total > 1 ? "s" : ""
+        } • ${sessionLabel}`;
+      } else {
+        refs.contextTexts.session.textContent = "Aucun élève chargé pour cette séance.";
+      }
+    }
+    syncBasePreferenceWithContext();
+    updateContextVisibility();
     refreshStudentOptions();
+    updatePrimaryButtonState();
   }
 
   function refreshStudentOptions() {
@@ -2074,10 +2486,12 @@
     if (!hasOptions) {
       studentDirectory = new Map();
       setStatus(refs.studentStatus, "Ajoutez des élèves pour lancer un bilan individuel.", "info");
+      updatePrimaryButtonState();
       return;
     }
     setStatus(refs.studentStatus, "", "info");
     studentDirectory = new Map(options.map((entry) => [entry.key, entry]));
+    updatePrimaryButtonState();
   }
 
   function buildStudentOptionList(entries = []) {
@@ -2155,7 +2569,7 @@
     const storedContext = getStoredAIContext();
     const sessionMeta = getStoredSessionMeta();
     const manualInterpretation = refs.interpretationField?.value || localStorage.getItem(STORAGE.INTERPRETATION) || "";
-    const { dictionary, forcedDictionary, forcedDictionaryId, manualEntry, autoDictionary } =
+    const { dictionary, forcedDictionary, forcedDictionaryId, manualEntry, autoDictionary, baseDictionary } =
       resolveDictionaryForStudentContext({
         storedContext,
         summary,
@@ -2184,13 +2598,13 @@
       datasetSize: dataset.length,
       usedEntries: preparedDataset.length,
       scope: "session",
-      dictionarySource: forcedDictionary
-        ? "forced"
-        : manualEntry
-        ? "manual"
-        : autoDictionary
-        ? "auto"
-        : dictionary?.source || "default",
+      dictionarySource: resolveDictionarySourceTag({
+        forcedDictionary,
+        manualEntry,
+        baseApplied: Boolean(baseDictionary),
+        autoDictionary,
+        dictionary,
+      }),
     });
     return analytics.student_analysis;
   }
@@ -2203,7 +2617,7 @@
     const sessionMeta = getStoredSessionMeta() || {};
     const storedContext = getStoredAIContext();
     const manualInterpretation = refs.interpretationField?.value || localStorage.getItem(STORAGE.INTERPRETATION) || "";
-    const { dictionary, forcedDictionary, forcedDictionaryId, manualEntry, autoDictionary } =
+    const { dictionary, forcedDictionary, forcedDictionaryId, manualEntry, autoDictionary, baseDictionary } =
       resolveDictionaryForStudentContext({
         storedContext,
         summary: {},
@@ -2250,13 +2664,13 @@
       cycleMeta: cycleBundle.cycle_meta || null,
       cycleSessionCount: cycleBundle.sessions.length,
       cycleAnalysis: cycleBundle.merged_cycle_analysis || null,
-      dictionarySource: forcedDictionary
-        ? "forced"
-        : manualEntry
-        ? "manual"
-        : autoDictionary
-        ? "auto"
-        : dictionary?.source || "default",
+      dictionarySource: resolveDictionarySourceTag({
+        forcedDictionary,
+        manualEntry,
+        baseApplied: Boolean(baseDictionary),
+        autoDictionary,
+        dictionary,
+      }),
     });
     return studentAnalysis;
   }
@@ -2272,8 +2686,9 @@
         : getActivityDictionary(
             storedContext?.activite || summary?.meta?.activityName || sessionMeta?.activityName || ""
           );
-    const dictionary = forcedDictionary || manualDictionary || autoDictionary || null;
-    return { dictionary, forcedDictionary, forcedDictionaryId, manualEntry, autoDictionary };
+    const baseDictionary = forcedDictionary || manualDictionary ? null : getPreferredBaseDictionary(storedContext);
+    const dictionary = forcedDictionary || manualDictionary || baseDictionary || autoDictionary || null;
+    return { dictionary, forcedDictionary, forcedDictionaryId, manualEntry, autoDictionary, baseDictionary };
   }
 
   function setCurrentStudentContext({
@@ -2319,6 +2734,8 @@
       cycleAnalysis: scope === "cycle" ? cycleAnalysis : null,
       studentLabel: "",
       studentClasse: "",
+      baseReading: getBaseReadingSnapshot(),
+      analysisMode: scope === "cycle" ? ANALYSIS_MODES.cycle : ANALYSIS_MODES.session,
     };
   }
 
@@ -2360,7 +2777,7 @@
     }
     if (refs.modalModeIndicator) {
       refs.modalModeIndicator.textContent =
-        scope === "cycle" ? "Mode IA : bilan élève (cycle)" : "Mode IA : bilan élève (séance)";
+        scope === "cycle" ? "Bilan élève : cycle" : "Bilan élève : séance";
     }
     refs.modalDictionaryIndicator?.classList.add("sp-hidden");
     const entries = sections.map((section) => ({
@@ -2448,7 +2865,7 @@
       const line = details.length ? `${parts.join(" • ")} — ${details.join(" • ")}` : parts.join(" • ");
       list.push(line);
     });
-    return list.slice(0, STUDENT_HISTORY_LIMIT);
+    return list.slice(0, STUDENT_HISTORY_LIMIT_SAFE);
   }
 
   function formatHistoryDate(value) {
@@ -2504,41 +2921,51 @@
     const diagnostics = cycleDiagnostics || getCycleDiagnostics();
     const cycleCount = cycleBundle?.sessions?.length || diagnostics.retained || 0;
     const sourceCount = sessionBundle?.sources?.length || 0;
-    const hasCycle = cycleCount > 1;
-    let label = "Mode IA : séance";
-    if (hasCycle) {
-      label = `Mode IA : cycle (${cycleCount} séance${cycleCount > 1 ? "s" : ""})`;
-    } else if (sourceCount > 1) {
-      label = `Mode IA : multi-apps (${sourceCount} source${sourceCount > 1 ? "s" : ""})`;
-    }
-    const retained = hasCycle ? cycleCount : cycleRetainedCount || diagnostics.retained || 0;
-    const totalCandidates = cycleCandidateCount || diagnostics.totalCandidates || (hasCycle ? cycleCount : retained || 1);
-    const retainedLabel = `séance${Math.max(retained, 1) > 1 ? "s" : ""}`;
-    const retenueWord = Math.max(retained, 1) > 1 ? "retenues" : "retenue";
-    let detailText = "";
-    if (totalCandidates > 1) {
-      if (hasCycle) {
-        detailText = `Cycle : ${retained} ${retainedLabel} ${retenueWord} sur ${totalCandidates}`;
+    const totalCandidates = cycleCandidateCount || diagnostics.totalCandidates || cycleCount || 0;
+    const retained = cycleCount || cycleRetainedCount || diagnostics.retained || 0;
+    const requestedMode = selectedAnalysisMode;
+    const modeLabel = formatAnalysisModeLabel(requestedMode);
+    let indicatorText = `Type d’analyse : ${modeLabel}`;
+    if (requestedMode === ANALYSIS_MODES.cycle) {
+      if (retained >= CYCLE_MIN_SESSIONS_FOR_FALLBACK) {
+        indicatorText += ` • ${retained} séance${retained > 1 ? "s" : ""} retenue${retained > 1 ? "s" : ""}`;
+      } else if (totalCandidates > 0) {
+        indicatorText += ` • ${retained}/${totalCandidates} séance${totalCandidates > 1 ? "s" : ""}`;
       } else {
-        detailText = `Cycle non activé : ${retained} ${retainedLabel} ${retenueWord} sur ${totalCandidates}`;
+        indicatorText += " • en attente de cycle";
       }
-    } else {
-      const effectiveTotal = totalCandidates || 1;
-      const totalLabel = `séance${effectiveTotal > 1 ? "s" : ""}`;
-      detailText = `Cycle : ${effectiveTotal} ${totalLabel} (pas de cycle disponible)`;
+    } else if (requestedMode === ANALYSIS_MODES.student) {
+      const count = studentDirectory.size || 0;
+      indicatorText += ` • ${count} élève${count > 1 ? "s" : ""}`;
+    } else if (sourceCount > 1) {
+      indicatorText += ` • ${sourceCount} source${sourceCount > 1 ? "s" : ""} QR`;
+    } else if (retained >= CYCLE_MIN_SESSIONS_FOR_FALLBACK) {
+      indicatorText += ` • cycle prêt (${retained} séance${retained > 1 ? "s" : ""})`;
     }
-    if (refs.modeIndicator) refs.modeIndicator.textContent = label;
-    if (refs.modalModeIndicator) {
-      refs.modalModeIndicator.textContent = detailText ? `${label} — ${detailText}` : label;
+    if (refs.modeIndicator) refs.modeIndicator.textContent = indicatorText;
+    if (refs.modalModeIndicator) refs.modalModeIndicator.textContent = indicatorText;
+    if (refs.contextTexts?.cycle) {
+      if (totalCandidates > 0) {
+        refs.contextTexts.cycle.textContent = `Séances retenues : ${retained} sur ${totalCandidates}`;
+      } else {
+        refs.contextTexts.cycle.textContent = "Cycle non détecté pour cette classe.";
+      }
     }
     if (refs.cycleWarning) {
-      refs.cycleWarning.textContent = detailText;
-      refs.cycleWarning.classList.remove("sp-hidden");
-      if (hasCycle) refs.cycleWarning.classList.remove("ai-mode-indicator--warning");
-      else refs.cycleWarning.classList.add("ai-mode-indicator--warning");
+      if (requestedMode === ANALYSIS_MODES.cycle) {
+        const message =
+          retained >= CYCLE_MIN_SESSIONS_FOR_FALLBACK
+            ? "Cycle prêt à être analysé."
+            : "Ajoutez au moins deux séances retenues pour lancer le bilan.";
+        refs.cycleWarning.textContent = message;
+        refs.cycleWarning.classList.toggle("ai-mode-indicator--warning", retained < CYCLE_MIN_SESSIONS_FOR_FALLBACK);
+        refs.cycleWarning.classList.remove("sp-hidden");
+      } else {
+        refs.cycleWarning.classList.add("sp-hidden");
+      }
     }
     updateDictionaryIndicators();
-    renderCycleDiagnostics(diagnostics, hasCycle, totalCandidates);
+    renderCycleDiagnostics(diagnostics, retained >= CYCLE_MIN_SESSIONS_FOR_FALLBACK, totalCandidates);
   }
 
   function updateDictionaryIndicators() {
@@ -2565,9 +2992,17 @@
 
   function buildDictionaryIndicatorText() {
     const info = currentContext?.dictionaryInfo;
-    if (!info || !info.label) return "";
+    const baseLabel = selectedBase !== "auto" ? BASE_READING_LABELS[selectedBase] : "";
+    if (!info || !info.label) {
+      return baseLabel ? `Lecture actuelle : ${baseLabel}` : "";
+    }
     const sourceLabel = formatDictionarySourceLabel(info.source);
-    return sourceLabel ? `Référentiel : ${info.label} (${sourceLabel})` : `Référentiel : ${info.label}`;
+    let text = `Référentiel : ${info.label}`;
+    if (sourceLabel) text += ` (${sourceLabel})`;
+    if (baseLabel && info.label !== baseLabel) {
+      text += ` • Lecture : ${baseLabel}`;
+    }
+    return text;
   }
 
   function formatDictionarySourceLabel(source = "") {
@@ -2575,6 +3010,7 @@
     if (!normalized) return "";
     if (normalized.includes("manual")) return "manuel";
     if (normalized.includes("forced")) return "manuel";
+    if (normalized.includes("base")) return "lecture fixée";
     if (normalized.includes("auto") || normalized === "default") return "auto";
     return normalized;
   }
@@ -2582,7 +3018,7 @@
   function renderCycleDiagnostics(diagnostics = {}, hasCycle = false, totalCandidates = 0) {
     if (!refs.cycleDiagnostics || !refs.cycleDiagnosticsList) return;
     const entries = Array.isArray(diagnostics.rejections) ? diagnostics.rejections : [];
-    if (!entries.length) {
+    if (!entries.length || selectedAnalysisMode !== ANALYSIS_MODES.cycle) {
       refs.cycleDiagnosticsList.innerHTML = "";
       refs.cycleDiagnostics.classList.add("sp-hidden");
       return;
@@ -2889,8 +3325,16 @@
     const forcedDictionaryId = trigger.forcedDictionaryId || null;
     const forcedDictionary = forcedDictionaryId ? getDictionaryByIdSafe(forcedDictionaryId) : null;
     const manualEntry = forcedDictionary ? null : getManualDictionaryEntry(storedContext);
+    const baseDictionary = forcedDictionary ? null : getPreferredBaseDictionary(storedContext);
     const autoDictionary = forcedDictionary ? null : getActivityDictionary(storedContext.activite || "");
-    const dictionaryToUse = forcedDictionary || manualEntry?.dictionary || autoDictionary;
+    const dictionaryToUse = forcedDictionary || manualEntry?.dictionary || baseDictionary || autoDictionary;
+    const dictionarySource = forcedDictionary
+      ? "cycle-forced"
+      : manualEntry
+      ? "manual"
+      : baseDictionary
+      ? "base-preference"
+      : dictionaryToUse?.source || "default";
     rememberAutoDictionary(storedContext, dictionaryToUse);
     currentContext = {
       className: trigger.className || "",
@@ -2914,7 +3358,7 @@
         ? {
             id: dictionaryToUse.id,
             label: dictionaryToUse.label || dictionaryToUse.id || "Activité",
-            source: forcedDictionary ? "cycle-forced" : manualEntry ? "manual" : dictionaryToUse.source || "default",
+            source: dictionarySource || "default",
             forcedDictionaryId: forcedDictionaryId || null,
             forcedLabel: forcedDictionary?.label || null,
           }
@@ -2924,6 +3368,8 @@
       cycleAnalysis: null,
       isCycle: false,
       cycleSessionCount: 0,
+      baseReading: getBaseReadingSnapshot(),
+      analysisMode: ANALYSIS_MODES.cycle,
     };
     const interpretationEngine = window.ScanProfAIInterpretationEngine;
     const analyticsEngine = window.ScanProfClassAnalytics;
@@ -3012,6 +3458,8 @@
       class_analytics: representativeSession?.class_analytics || null,
       session_bundle: null,
       cycle_bundle: cycleBundle,
+      analysis_mode: ANALYSIS_MODES.cycle,
+      base_reading: currentContext.baseReading,
     };
     console.info("[ScanProf IA] cycle_bundle present", analysisInput.cycle_bundle);
     console.info("[ScanProf IA] session_bundle present", analysisInput.session_bundle);
@@ -3020,7 +3468,11 @@
       if (!builder || typeof builder.buildPrompt !== "function") {
         throw new Error("Module de prompt introuvable.");
       }
-      const { messages, schema } = builder.buildPrompt({ analysisInput, mode: "bilan" });
+      const { messages, schema } = builder.buildPrompt({
+        analysisInput,
+        mode: "bilan",
+        analysisMode: ANALYSIS_MODES.cycle,
+      });
       logPromptDiagnostics(messages, sampleDataset, summary.columns || []);
       const model = getSelectedModel();
       const processed = await generateAIResponseWithRetry({

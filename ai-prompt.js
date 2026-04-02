@@ -59,20 +59,23 @@
     cross_training: buildCrossTrainingBlock,
   };
 
-  function buildPrompt({ analysisInput, mode = "bilan" }) {
+  function buildPrompt({ analysisInput, mode = "bilan", analysisMode = "session" }) {
     const payload = analysisInput || {};
     console.info("[ScanProf IA] prompt mode", {
       hasCycle: !!payload?.cycle_bundle,
       cycleSessions: payload?.cycle_bundle?.sessions?.length || 0,
       hasMultiApps: !!payload?.session_bundle,
       multiSources: payload?.session_bundle?.sources?.length || 0,
+      requestedMode: analysisMode,
     });
     const contexte = payload.contexte || {};
     const objectif = MODE_OBJECTIVES[mode] || MODE_OBJECTIVES.bilan;
     const schema = MODE_SCHEMAS[mode] || SECTION_SCHEMA;
     const sessionBundle = payload.session_bundle || null;
     const cycleBundle = payload.cycle_bundle || null;
-    const isCycleBundle = mode === "bilan" && cycleBundle?.sessions?.length > 1;
+    const requestedMode = analysisMode || "session";
+    const cycleBundleAvailable = cycleBundle?.sessions?.length > 1;
+    const isCycleBundle = mode === "bilan" && cycleBundleAvailable && requestedMode === "cycle";
     const isMultiSourceBundle = !isCycleBundle && mode === "bilan" && sessionBundle?.sources?.length > 1;
     const referentiel = isCycleBundle
       ? detectReferentialFromCycle(cycleBundle)
