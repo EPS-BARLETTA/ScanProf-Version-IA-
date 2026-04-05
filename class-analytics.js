@@ -3779,6 +3779,7 @@
     const heterogeneityScore = heterogeneityRank(heterogeneityLabel);
     const successShare = findComparisonShare(base, "réuss");
     const learningField = dictionary?.learningField || dictionary?.label || "l’activité";
+    const activityId = normalizeKeyName(dictionary?.id || base.context?.dictionary_id || "");
 
     const coverageLow = datasetEntries < Math.max(studentCount, 1) || meanEntries < 1;
     const recurrentIssues = dataIssues.length >= 2;
@@ -3814,106 +3815,60 @@
     }
 
     const summarySentences = createSummarySentences();
+    const baseScenarioDetails = buildBaseScenarioDetails({
+      scenario,
+      learningField,
+      meanEntries,
+      heterogeneityLabel,
+      successShare,
+      datasetEntries,
+      studentCount,
+      teachingPriorities,
+      sessionTemplates,
+    });
+    const activitySignals = collectActivitySignals(base, {
+      meanEntries,
+      medianEntries,
+      successShare,
+      heterogeneityLabel,
+      datasetEntries,
+      studentCount,
+    });
+    const activityOverride = specializeScenarioByActivity({
+      scenario,
+      activityId,
+      learningField,
+      signals: activitySignals,
+    });
+    const scenarioDetails = mergeScenarioDetails(baseScenarioDetails, activityOverride);
+    evidence.push(...(scenarioDetails.evidence || []));
+
     const diagnosis = {
       learning_field: learningField,
       scenario,
-      evidence: Array.from(new Set(evidence.filter(Boolean))).slice(0, 4),
+      evidence: Array.from(new Set(evidence.filter(Boolean))).slice(0, 6),
+      problem_type: scenarioDetails.problemType || scenario,
     };
     const guidance = {
       learning_field: learningField,
       levers: [],
       next_session_ideas: [],
+      problem_type: diagnosis.problem_type,
     };
 
-    switch (scenario) {
-      case "data_gap": {
-        diagnosis.main_finding = `Les relevés restent trop partiels pour lire la progression en ${learningField}.`;
-        diagnosis.class_profile =
-          "L'engagement existe mais les colonnes prévues/renseignées ne suffisent pas à dégager une tendance.";
-        diagnosis.priority_hint =
-          "Stabiliser un protocole de collecte identique pour toute la classe lors de la prochaine séance.";
-        guidance.priority_for_next_session = diagnosis.priority_hint;
-        guidance.rationale =
-          "Des données homogènes permettront de comparer les séances et d'objectiver les progrès.";
-        guidance.levers = selectGuidanceItems(
-          ["Imposer la même feuille prévu/réalisé", "Nommer un binôme garant des relevés."],
-          didacticLevers,
-          3
-        );
-        guidance.next_session_ideas = selectGuidanceItems(
-          ["Démarrer la séance par un court rappel des indicateurs à renseigner."],
-          sessionTemplates,
-          3
-        );
-        break;
-      }
-      case "heterogeneity": {
-        diagnosis.main_finding = `La classe présente une hétérogénéité marquée sur ${learningField}.`;
-        diagnosis.class_profile =
-          "Les écarts de niveau/engagement nécessitent une différenciation plus visible pour maintenir tout le monde en progression.";
-        diagnosis.priority_hint = "Préparer des tâches différenciées (groupes de besoin ou paliers de difficulté).";
-        guidance.priority_for_next_session = diagnosis.priority_hint;
-        guidance.rationale = "Chaque sous-groupe doit identifier un défi atteignable et observable.";
-        guidance.levers = selectGuidanceItems(
-          ["Constituer 2 à 3 ateliers avec consignes graduées.", "Formaliser des contrats d’essais par groupe."],
-          didacticLevers,
-          3
-        );
-        guidance.next_session_ideas = selectGuidanceItems(
-          ["Installer une rotation libre mais avec objectif clair pour chaque couleur / atelier."],
-          sessionTemplates,
-          3
-        );
-        break;
-      }
-      case "raise_level": {
-        diagnosis.main_finding = `La majorité des élèves valide les tâches sécurisées : la montée en exigence reste à provoquer.`;
-        diagnosis.class_profile = `Les indicateurs montrent une forte réussite mais peu de tentatives sur le niveau supérieur en ${learningField}.`;
-        diagnosis.priority_hint = "Planifier une montée en difficulté accompagnée pour faire évoluer les repères.";
-        guidance.priority_for_next_session = diagnosis.priority_hint;
-        guidance.rationale = "La progression passe par des essais guidés sur une difficulté légèrement supérieure.";
-        guidance.levers = selectGuidanceItems(
-          ["Prévoir un essai guidé sur la cotation +1 ou sur un tempo plus exigeant."],
-          didacticLevers,
-          3
-        );
-        guidance.next_session_ideas = selectGuidanceItems(
-          ["Mettre en place un défi 'voie repère' ou 'atelier intensité' à comparer avec la séance précédente."],
-          sessionTemplates,
-          3
-        );
-        break;
-      }
-      case "engagement": {
-        diagnosis.main_finding = `L'engagement reste mesuré (${round(meanEntries, 2)} essai(s) / élève) : il faut densifier la pratique.`;
-        diagnosis.class_profile = "Plusieurs élèves n'ont pas encore un volume suffisant pour objectiver une progression.";
-        diagnosis.priority_hint = "Augmenter le nombre d'essais observables par élève avec un temps d'activité plus dense.";
-        guidance.priority_for_next_session = diagnosis.priority_hint;
-        guidance.rationale = "Sans volume minimum, les repères restent fragiles.";
-        guidance.levers = selectGuidanceItems(
-          ["Organiser des séries courtes et répétées avec feedback immédiat."],
-          didacticLevers,
-          3
-        );
-        guidance.next_session_ideas = selectGuidanceItems(
-          ["Alterner deux passages rapides plutôt qu'un seul long essai pour chaque élève."],
-          sessionTemplates,
-          3
-        );
-        break;
-      }
-      default: {
-        diagnosis.main_finding = `Les données offrent une base exploitable : il est possible d'affiner la lecture pédagogique en ${learningField}.`;
-        diagnosis.class_profile = "Le groupe est engagé, il reste à préciser la prochaine marche de progression.";
-        const defaultPriority =
-          teachingPriorities[0] || "Identifier une priorité claire (montée en difficulté, précision, régularité).";
-        diagnosis.priority_hint = defaultPriority;
-        guidance.priority_for_next_session = defaultPriority;
-        guidance.rationale = "Clarifier la priorité rendra la séance suivante plus lisible pour les élèves.";
-        guidance.levers = selectGuidanceItems([], didacticLevers, 3);
-        guidance.next_session_ideas = selectGuidanceItems([], sessionTemplates, 3);
-      }
-    }
+    diagnosis.main_finding = scenarioDetails.mainFinding;
+    diagnosis.class_profile = scenarioDetails.classProfile;
+    const fallbackPriority =
+      scenarioDetails.priorityHint ||
+      teachingPriorities[0] ||
+      "Identifier une priorité claire (montée en difficulté, précision ou régularité).";
+    diagnosis.priority_hint = fallbackPriority;
+
+    const finalPriority = scenarioDetails.priorityForNextSession || fallbackPriority;
+    guidance.priority_for_next_session = finalPriority;
+    guidance.rationale = scenarioDetails.rationale || finalPriority;
+    guidance.levers = selectGuidanceItems(scenarioDetails.leverHints || [], didacticLevers, 3);
+    guidance.next_session_ideas = selectGuidanceItems(scenarioDetails.nextIdeas || [], sessionTemplates, 3);
 
     if (diagnosis.main_finding) summarySentences.overview.push(diagnosis.main_finding);
     if (diagnosis.priority_hint) summarySentences.needs_work.push(diagnosis.priority_hint);
@@ -3930,8 +3885,383 @@
         teaching_levers: guidance.levers,
         next_session_ideas: guidance.next_session_ideas,
         learning_field: guidance.learning_field,
+        problem_type: guidance.problem_type,
       },
       summary_sentences: summarySentences,
+    };
+  }
+
+  function buildBaseScenarioDetails({
+    scenario,
+    learningField,
+    meanEntries,
+    heterogeneityLabel,
+    successShare,
+    datasetEntries,
+    studentCount,
+    teachingPriorities = [],
+    sessionTemplates = [],
+  }) {
+    const details = {
+      mainFinding: "",
+      classProfile: "",
+      priorityHint: "",
+      priorityForNextSession: "",
+      rationale: "",
+      leverHints: [],
+      nextIdeas: [],
+      evidence: [],
+      problemType: scenario,
+    };
+    switch (scenario) {
+      case "data_gap": {
+        details.mainFinding = `Les relevés restent trop partiels pour lire la progression en ${learningField}.`;
+        details.classProfile =
+          "L'engagement existe mais les colonnes prévues/renseignées ne suffisent pas à dégager une tendance.";
+        details.priorityHint =
+          "Stabiliser un protocole de collecte identique (mêmes colonnes, mêmes moments) pour toute la classe.";
+        details.priorityForNextSession = details.priorityHint;
+        details.rationale = "Des données homogènes permettront de comparer les séances et d'objectiver les progrès.";
+        details.leverHints = [
+          "Imposer la même feuille prévu/réalisé remplie devant les élèves.",
+          "Nommer un binôme garant des relevés sur chaque atelier.",
+        ];
+        details.nextIdeas = [
+          "Démarrer la séance par un rappel des indicateurs à renseigner et un test de saisie commune.",
+        ];
+        if (datasetEntries && studentCount) {
+          details.evidence.push(`${datasetEntries} enregistrement(s) exploitables pour ${studentCount} élève(s).`);
+        }
+        break;
+      }
+      case "heterogeneity": {
+        details.mainFinding = `La classe présente une hétérogénéité marquée sur ${learningField}.`;
+        details.classProfile =
+          "Les écarts de niveau/engagement nécessitent une différenciation claire pour maintenir tout le monde en progression.";
+        details.priorityHint = "Préparer des tâches différenciées (groupes de besoin ou paliers de difficulté).";
+        details.priorityForNextSession = details.priorityHint;
+        details.rationale = heterogeneityLabel ? `Hétérogénéité ${heterogeneityLabel}.` : null;
+        details.leverHints = [
+          "Constituer 2 à 3 ateliers avec consignes graduées.",
+          "Formaliser des contrats d’essais par groupe.",
+        ];
+        details.nextIdeas = [
+          "Installer une rotation libre mais avec objectif clair pour chaque couleur / atelier.",
+        ];
+        if (details.rationale) details.evidence.push(details.rationale);
+        break;
+      }
+      case "raise_level": {
+        const successText = Number.isFinite(successShare)
+          ? `${toPercent(successShare)} % des élèves valident au moins une tentative.`
+          : null;
+        details.mainFinding = `La réussite est solide mais la montée en exigence reste limitée en ${learningField}.`;
+        details.classProfile =
+          "Les indicateurs montrent une forte réussite mais peu de tentatives sur le niveau supérieur.";
+        details.priorityHint = "Planifier une montée en difficulté accompagnée pour faire évoluer les repères.";
+        details.priorityForNextSession = details.priorityHint;
+        details.rationale =
+          "La progression passe par des essais guidés sur une difficulté légèrement supérieure.";
+        details.leverHints = [
+          "Prévoir un essai guidé sur la cotation +1 ou sur un tempo plus exigeant.",
+        ];
+        details.nextIdeas = [
+          "Organiser un défi « voie repère » ou « atelier intensité » comparé à la séance précédente.",
+        ];
+        if (successText) details.evidence.push(successText);
+        break;
+      }
+      case "engagement": {
+        const meanText = Number.isFinite(meanEntries)
+          ? `${round(meanEntries, 2)} essai(s) / élève`
+          : "un volume limité";
+        details.mainFinding = `L'engagement reste mesuré (${meanText}) : il faut densifier la pratique.`;
+        details.classProfile = "Plusieurs élèves n'ont pas encore un volume suffisant pour objectiver une progression.";
+        details.priorityHint =
+          "Fixer un contrat d'au moins 2 à 3 essais observables par élève avec feedback immédiat.";
+        details.priorityForNextSession = details.priorityHint;
+        details.rationale = `Moyenne actuelle : ${meanText}.`;
+        details.leverHints = [
+          "Organiser des séries courtes et répétées avec feedback immédiat.",
+        ];
+        details.nextIdeas = [
+          "Alterner deux passages rapides plutôt qu'un seul long essai pour chaque élève.",
+        ];
+        details.evidence.push(details.rationale);
+        break;
+      }
+      default: {
+        details.mainFinding = `Les données offrent une base exploitable : il est possible d'affiner la lecture pédagogique en ${learningField}.`;
+        details.classProfile = "Le groupe est engagé, il reste à préciser la prochaine marche de progression.";
+        const defaultPriority =
+          teachingPriorities[0] || "Identifier une priorité claire (montée en difficulté, précision, régularité).";
+        details.priorityHint = defaultPriority;
+        details.priorityForNextSession = defaultPriority;
+        details.rationale = "Clarifier la priorité rendra la séance suivante plus lisible pour les élèves.";
+        details.leverHints = [];
+        details.nextIdeas = sessionTemplates.slice(0, 1);
+      }
+    }
+    return details;
+  }
+
+  function mergeScenarioDetails(baseDetails = {}, overrides = {}) {
+    if (!overrides || typeof overrides !== "object") return baseDetails;
+    const merged = { ...baseDetails };
+    ["mainFinding", "classProfile", "priorityHint", "priorityForNextSession", "rationale", "problemType"].forEach(
+      (key) => {
+        if (overrides[key]) merged[key] = overrides[key];
+      }
+    );
+    merged.leverHints = combineUniqueStrings([overrides.leverHints, baseDetails.leverHints], 5);
+    merged.nextIdeas = combineUniqueStrings([overrides.nextIdeas, baseDetails.nextIdeas], 5);
+    merged.evidence = combineUniqueStrings([overrides.evidence, baseDetails.evidence], 6);
+    return merged;
+  }
+
+  function collectActivitySignals(base = {}, extras = {}) {
+    const measures = base.measures || {};
+    const aggregate = base.class_overview?.aggregate || {};
+    return {
+      meanEntries: extras.meanEntries,
+      medianEntries: extras.medianEntries,
+      successShare: extras.successShare,
+      heterogeneityLabel: extras.heterogeneityLabel,
+      datasetEntries: extras.datasetEntries,
+      studentCount: extras.studentCount || aggregate.student_count || 0,
+      dataIssues: base.data_quality?.issues || [],
+      limits: base.limits || [],
+      climb: {
+        thresholdLevel: measures.cotation?.threshold?.level || null,
+        thresholdShare: measures.cotation?.threshold?.share || null,
+        medianLevel: measures.cotation?.median_level || null,
+        meanAttempts:
+          (measures.voies && measures.voies.mean_per_student) != null
+            ? measures.voies.mean_per_student
+            : extras.meanEntries || null,
+        dispersion: measures.voies?.dispersion?.label || null,
+      },
+      cross: {
+        exercises: measures.cross_training?.total_exercises || 0,
+        withMajority: measures.cross_training?.exercises_with_majority || 0,
+        withDifficulty: measures.cross_training?.exercises_with_difficulty || 0,
+        mostNegativeLabel: measures.cross_training?.most_negative_gap?.label || null,
+      },
+    };
+  }
+
+  function specializeScenarioByActivity({ scenario, activityId, learningField, signals }) {
+    if (!activityId) return {};
+    switch (activityId) {
+      case "climb_track":
+        return specializeClimbTrackScenario({ scenario, learningField, signals });
+      case "cross_training":
+        return specializeCrossTrainingScenario({ scenario, signals });
+      case "arcathlon_v2":
+        return specializeArcathlonScenario({ scenario, learningField });
+      case "laser_run":
+        return specializeLaserRunScenario({ scenario, learningField });
+      default:
+        return {};
+    }
+  }
+
+  function specializeClimbTrackScenario({ scenario, learningField, signals }) {
+    const overrides = { leverHints: [], nextIdeas: [], evidence: [] };
+    const climb = signals?.climb || {};
+    const successShare = signals?.successShare;
+    const successText = Number.isFinite(successShare)
+      ? `${toPercent(successShare)} % valident au moins une voie`
+      : null;
+    const thresholdText =
+      Number.isFinite(climb.thresholdShare) && climb.thresholdLevel
+        ? `${toPercent(climb.thresholdShare)} % seulement atteignent ${climb.thresholdLevel} ou plus`
+        : null;
+    switch (scenario) {
+      case "raise_level":
+        overrides.mainFinding =
+          thresholdText && successText
+            ? `La classe réussit surtout sur des voies sécurisées (${successText}) mais ${thresholdText}.`
+            : `La classe réussit surtout sur des voies sécurisées en ${learningField} mais tente peu la cotation supérieure.`;
+        overrides.classProfile = climb.medianLevel
+          ? `Les essais se concentrent autour de ${climb.medianLevel}; les tentatives vers la cotation suivante restent rares.`
+          : "Les essais restent concentrés sur la zone de confort, la montée en difficulté est limitée.";
+        overrides.priorityHint =
+          "Faire passer chaque binôme sur la cotation supérieure avec accompagnement tracé (contrat 2 essais guidés).";
+        overrides.rationale =
+          thresholdText ||
+          "Multiplier les tentatives accompagnées permettra d'explorer la cotation supérieure sans perdre la réussite.";
+        overrides.leverHints = [
+          "Planifier un essai guidé sur la cotation +1 pour chaque binôme.",
+          "Utiliser le mur de suivi pour fixer la prochaine voie repère.",
+        ];
+        overrides.nextIdeas = [
+          "Enchaîner essai libre sur la voie maîtrisée puis essai guidé sur la voie cible plus ambitieuse.",
+        ];
+        overrides.evidence = combineUniqueStrings([[thresholdText, successText]], 4);
+        break;
+      case "heterogeneity":
+        {
+          const dispersion = climb.dispersion || signals.heterogeneityLabel || "marquée";
+          overrides.mainFinding = `Les niveaux d'engagement en escalade sont très contrastés (${dispersion}).`;
+          overrides.classProfile =
+            "Certains binômes restent sur la consolidation quand d'autres pourraient tenter l'en tête ou la cotation supérieure.";
+          overrides.priorityHint =
+            "Constituer des groupes de besoin (consolider / tenter +1 / oser l’en tête) avec objectifs ciblés.";
+          overrides.rationale = `Hétérogénéité ${dispersion} relevée dans les tentatives.`;
+          overrides.leverHints = [
+            "Installer trois ateliers différenciés avec critères de réussite explicites.",
+            "Confier aux observateurs la mission d’écrire la suite pour leur binôme.",
+          ];
+          overrides.nextIdeas = [
+            "Carte de route par groupe : 1 voie repère + 1 défi accompagné correspondant au besoin.",
+          ];
+          overrides.evidence = combineUniqueStrings([[overrides.rationale]], 4);
+        }
+        break;
+      case "engagement":
+        if (Number.isFinite(climb.meanAttempts)) {
+          const meanText = `${round(climb.meanAttempts, 1)} voie(s) / élève en moyenne.`;
+          overrides.mainFinding = `Le volume d'essais reste limité en escalade (${meanText}).`;
+          overrides.classProfile =
+            "Plusieurs élèves n'ont qu'une ou deux voies renseignées, rendant la progression difficile à lire.";
+          overrides.priorityHint =
+            "Fixer un contrat d’au moins 3 voies observables par grimpeur, dont une sur un niveau cible.";
+          overrides.rationale = meanText;
+          overrides.leverHints = [
+            "Fractionner la séance en créneaux courts avec rotation obligatoire pour multiplier les passages.",
+          ];
+          overrides.nextIdeas = [
+            "Défi collectif : 3 voies minimum par binôme dont 1 découverte guidée, relevé commun en fin de séance.",
+          ];
+          overrides.evidence = combineUniqueStrings([[meanText]], 4);
+        }
+        break;
+      default:
+        break;
+    }
+    return overrides;
+  }
+
+  function specializeCrossTrainingScenario({ scenario, signals }) {
+    const overrides = { leverHints: [], nextIdeas: [], evidence: [] };
+    const cross = signals?.cross || {};
+    if (scenario === "data_gap") {
+      const exerciseText = cross.exercises
+        ? `${cross.exercises} atelier(s) seulement disposent d'un couple prévu/réalisé exploitable.`
+        : "Les colonnes prévu/réalisé sont quasi vides.";
+      overrides.mainFinding =
+        "Les relevés Cross Training restent trop incomplets pour interpréter l'évolution de la séance.";
+      overrides.classProfile =
+        "Les tours semblent réalisés mais les colonnes _p/_r ne permettent pas de suivre la gestion d'effort.";
+      overrides.priorityHint =
+        "Stabiliser un relevé commun (_p/_r) sur chaque atelier et le remplir en direct à chaque rotation.";
+      overrides.rationale = exerciseText;
+      overrides.leverHints = [
+        "Imposer une feuille unique prévu/réalisé affichée près des ateliers.",
+        "Désigner des binômes responsables du relevé avant de relancer le tour.",
+      ];
+      overrides.nextIdeas = [
+        "Mini-séance (4 ateliers) : relevé _p/_r obligatoire avant chaque relance, vérifié collectivement.",
+      ];
+      overrides.evidence = combineUniqueStrings([[exerciseText]], 4);
+    } else if (scenario === "heterogeneity") {
+      const majorityText =
+        cross.withMajority || cross.withDifficulty
+          ? `${cross.withMajority} atelier(s) dépassent le prévu quand ${cross.withDifficulty} restent sous l'objectif.`
+          : null;
+      overrides.mainFinding =
+        "Les ateliers Cross Training avancent à des rythmes opposés : certains dépassent le plan, d'autres peinent à l'atteindre.";
+      overrides.classProfile =
+        "Les écarts imposent de différencier charges et tempos pour garder tout le monde mobilisé.";
+      overrides.priorityHint =
+        "Proposer deux ou trois variantes par atelier (dosage, tempo, récupération) selon le niveau d'engagement.";
+      overrides.rationale = majorityText;
+      overrides.leverHints = [
+        "Colorer les ateliers (consolider / intensifier) avec objectifs chiffrés distincts.",
+      ];
+      overrides.nextIdeas = [
+        "Faire annoncer par chaque groupe le prochain palier (répétitions ou temps) avant la rotation suivante.",
+      ];
+      overrides.evidence = combineUniqueStrings([[majorityText]], 4);
+    } else if (scenario === "raise_level") {
+      const majorityText = cross.withMajority
+        ? `${cross.withMajority} atelier(s) sont déjà au-dessus du prévu.`
+        : null;
+      overrides.mainFinding =
+        "La majorité des ateliers est tenue : il faut créer un nouveau palier d'intensité ou de précision.";
+      overrides.classProfile =
+        "Les élèves respectent le plan mais prennent peu d'avance sur l'intensité ou la qualité d'exécution.";
+      overrides.priorityHint =
+        "Introduire une consigne supplémentaire (tempo, charge, amplitude) pour pousser chaque atelier un cran plus loin.";
+      overrides.rationale = majorityText;
+      overrides.leverHints = [
+        "Ajouter une variante « bonus » mesurable (répétitions supplémentaires, temps réduit) sur les ateliers maîtrisés.",
+      ];
+      overrides.nextIdeas = [
+        "Tour 2 : consigne d'intensité +10 % sur les ateliers réussis, relevé immédiat des écarts.",
+      ];
+      overrides.evidence = combineUniqueStrings([[majorityText]], 4);
+    } else if (scenario === "engagement") {
+      const datasetText =
+        Number.isFinite(signals?.meanEntries) && signals?.studentCount
+          ? `${round(signals.meanEntries, 2)} mesure(s) par élève en moyenne.`
+          : "Peu de relevés par élève.";
+      overrides.mainFinding =
+        "Le volume d'essais renseignés par élève reste limité en Cross Training, rendant la comparaison des tours difficile.";
+      overrides.classProfile =
+        "Plusieurs élèves n'ont qu'un relevé partiel, ce qui rend la progression peu lisible.";
+      overrides.priorityHint =
+        "Fixer un contrat de deux relevés complets (prévu/réalisé) par élève pour objectiver l'engagement.";
+      overrides.rationale = datasetText;
+      overrides.leverHints = [
+        "Planifier des tours courts avec arrêt obligatoire pour noter prévu/réalisé.",
+      ];
+      overrides.nextIdeas = [
+        "Séance focus collecte : deux tours identiques, relevé complet exigé avant la relance.",
+      ];
+      overrides.evidence = combineUniqueStrings([[datasetText]], 4);
+    }
+    return overrides;
+  }
+
+  function specializeArcathlonScenario({ scenario, learningField }) {
+    if (scenario !== "data_gap") return {};
+    return {
+      mainFinding:
+        "Les relevés course/tir sont trop irréguliers pour analyser précisément l'ArcAthlon.",
+      classProfile:
+        "Sans couples points_total / points_max ni indicateurs zone 2 homogènes, la progression reste illisible.",
+      priorityHint:
+        "Rejouer une séance avec protocole identique (points_total vs points_max + zone 2) avant de tirer des conclusions.",
+      rationale: "Comparer les séances nécessite les mêmes indicateurs de tir et de course.",
+      leverHints: [
+        "Préparer une fiche unique points_total / points_max / zone 2 remplie en direct.",
+      ],
+      nextIdeas: [
+        "Programmer deux passages comparables et comparer immédiatement les séries (nb_10 → nb_6).",
+      ],
+      evidence: [],
+    };
+  }
+
+  function specializeLaserRunScenario({ scenario, learningField }) {
+    if (scenario !== "data_gap") return {};
+    return {
+      mainFinding:
+        "Les relevés Laser Run (distance, temps, LED) sont insuffisants pour lire l'alternance course / tir.",
+      classProfile:
+        "Sans indicateurs LED comparables à chaque boucle, impossible d'observer la progression.",
+      priorityHint:
+        "Stabiliser un tableau Distance / Temps / LED par boucle et le renseigner à chaque passage.",
+      rationale: "Une alternance comparable est nécessaire pour observer régularité et précision.",
+      leverHints: [
+        "Fiche binôme Distance / Temps / LED remplie avant de repartir sur la boucle suivante.",
+      ],
+      nextIdeas: [
+        "Séance test : boucle rapide puis boucle maîtrisée, comparaison des LED à chaud.",
+      ],
+      evidence: [],
     };
   }
 
