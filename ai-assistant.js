@@ -1949,6 +1949,7 @@
       };
     });
     entries = applyCycleUltimateFallback(entries);
+    entries = polishReportEntries(entries);
     const entriesWithContent = entries.map((entry) => ({
       ...entry,
       content: valueToPlainText(entry.value) || EMPTY_SECTION_TEXT,
@@ -2257,6 +2258,209 @@
     }
     if (typeof value === "object") return Object.entries(value).map(([k, v]) => `${k}: ${valueToPlainText(v)}`).join("; ");
     return String(value);
+  }
+
+  function polishReportEntries(entries = []) {
+    if (!Array.isArray(entries) || !entries.length) return entries;
+    const diag = currentContext?.classAnalytics?.teaching_diagnosis || {};
+    const guidance = currentContext?.classAnalytics?.next_session_guidance || {};
+    const usedIdeas = new Set();
+    const map = Object.fromEntries(entries.map((entry) => [entry.key, entry]));
+
+    if (map.synthese) {
+      map.synthese.value = buildPolishedSynthesis(map.synthese.value, diag);
+      registerSentencesAsIdeas(map.synthese.value, usedIdeas);
+    }
+
+    entries.forEach((entry) => {
+      if (entry.key === "points_forts") {
+        entry.value = buildPolishedList(entry.value, usedIdeas, {
+          limit: 3,
+          fallback: buildStrengthFallback(diag),
+        });
+      } else if (entry.key === "points_a_retravailler") {
+        entry.value = buildPolishedList(entry.value, usedIdeas, {
+          limit: 3,
+        });
+      } else if (entry.key === "suite_proposee") {
+        entry.value = buildPolishedActions(entry.value, usedIdeas, guidance, diag);
+      } else if (entry.type !== "list") {
+        entry.value = trimSentenceText(entry.value, 3);
+      }
+    });
+
+    if (map.points_forts && (!Array.isArray(map.points_forts.value) || !map.points_forts.value.length)) {
+      const fallback = buildStrengthFallback(diag);
+      map.points_forts.value = fallback ? [fallback] : [];
+    }
+    if (
+      map.points_a_retravailler &&
+      (!Array.isArray(map.points_a_retravailler.value) || !map.points_a_retravailler.value.length)
+    ) {
+      const fallbackNeed = diag.priority_hint || diag.class_profile || diag.main_finding || "";
+      if (fallbackNeed) map.points_a_retravailler.value = [fallbackNeed];
+    }
+    if (map.suite_proposee && (!Array.isArray(map.suite_proposee.value) || !map.suite_proposee.value.length)) {
+      const fallbackActions = buildActionFallback(guidance, diag);
+      if (fallbackActions.length) map.suite_proposee.value = fallbackActions;
+    }
+
+    return entries;
+  }
+
+  function buildPolishedSynthesis(value, diag = {}) {
+    const sentences = [];
+    if (diag.main_finding) sentences.push(cleanSentence(diag.main_finding));
+    if (diag.class_profile) sentences.push(cleanSentence(diag.class_profile));
+    splitSentences(value).forEach((sentence) => sentences.push(cleanSentence(sentence)));
+    const seen = new Set();
+    const cleaned = sentences
+      .filter(Boolean)
+      .filter((sentence) => {
+        const norm = normalizeIdeaText(sentence);
+        if (!norm || seen.has(norm)) return false;
+        seen.add(norm);
+        return true;
+      })
+      .map((sentence, index) => {
+        if (index === 0 && startsWithDigit(sentence)) {
+          return wrapPedagogicalLead(sentence);
+        }
+        return sentence;
+      });
+    if (!cleaned.length && diag.priority_hint) {
+      cleaned.push(diag.priority_hint);
+    }
+    return cleaned.slice(0, 2).join(" ");
+  }
+
+  function buildPolishedList(value, usedIdeas, { limit = 3, fallback = null } = {}) {
+    const array = Array.isArray(value) ? value : value ? [value] : [];
+    const result = [];
+    array.forEach((item) => {
+      const clean = cleanListEntry(item);
+      if (!clean) return;
+      if (registerIdea(clean, usedIdeas)) result.push(clean);
+    });
+    if (!result.length && fallback) {
+      if (registerIdea(fallback, usedIdeas)) result.push(fallback);
+      else result.push(fallback);
+    }
+    return limit > 0 ? result.slice(0, limit) : result;
+  }
+
+  function buildPolishedActions(value, usedIdeas, guidance = {}, diag = {}) {
+    const array = Array.isArray(value) ? value : value ? [value] : [];
+    const priorityLine = guidance.priority_for_next_session || diag.priority_hint || null;
+    const candidates = [];
+    if (priorityLine) candidates.push(priorityLine);
+    candidates.push(...array, ...(guidance.teaching_levers || []), ...(guidance.next_session_ideas || []));
+    const result = [];
+    candidates.forEach((item) => {
+      const clean = enforceActionSpecificity(cleanListEntry(item), diag);
+      if (!clean) return;
+      if (registerIdea(clean, usedIdeas)) result.push(clean);
+    });
+    if (!result.length) {
+      buildActionFallback(guidance, diag).forEach((action) => {
+        if (registerIdea(action, usedIdeas)) result.push(action);
+      });
+    }
+    return result.slice(0, 3);
+  }
+
+  function buildActionFallback(guidance = {}, diag = {}) {
+    const list = [];
+    if (guidance.priority_for_next_session) list.push(guidance.priority_for_next_session);
+    (guidance.teaching_levers || []).slice(0, 2).forEach((lever) => list.push(lever));
+    (guidance.next_session_ideas || []).slice(0, 1).forEach((idea) => list.push(idea));
+    if (!list.length && diag.priority_hint) {
+      list.push(diag.priority_hint);
+    }
+    return list.slice(0, 3).map((item) => cleanListEntry(item)).filter(Boolean);
+  }
+
+  function buildStrengthFallback(diag = {}) {
+    const scenario = diag.problem_type || diag.scenario || "";
+    const fallbackMap = {
+      data_gap: "Engagement présent mais difficile à exploiter faute de relevés fiables.",
+      engagement: "Participation régulière mais encore insuffisante pour lire une progression.",
+      raise_level: "Réussites solides sur le palier actuel, appui pour tenter plus haut.",
+      heterogeneity: "Des réussites servent de repères pour accompagner les profils à relancer.",
+      balanced: "Des appuis identifiés permettent de construire la prochaine étape.",
+    };
+    return fallbackMap[scenario] || "Participation régulière, base pour construire la séance suivante.";
+  }
+
+  function trimSentenceText(value, limit = 3) {
+    const sentences = splitSentences(value);
+    return sentences.slice(0, limit).join(" ");
+  }
+
+  function cleanListEntry(entry) {
+    if (entry == null) return "";
+    return String(entry).replace(/^[•\-–\s]+/, "").replace(/\s+/g, " ").trim();
+  }
+
+  function enforceActionSpecificity(action, diag = {}) {
+    if (!action) return "";
+    const vagueMatch = action.match(/^\s*(continuer|poursuivre|être attentif|rester attentif)/i);
+    if (vagueMatch && diag.priority_hint) {
+      return diag.priority_hint;
+    }
+    return action;
+  }
+
+  function splitSentences(text) {
+    if (!text && text !== 0) return [];
+    if (Array.isArray(text)) {
+      return text
+        .map((item) => splitSentences(item))
+        .flat()
+        .filter(Boolean);
+    }
+    return String(text)
+      .split(/(?<=[.!?])\s+|[\n\r]+/)
+      .map((part) => cleanSentence(part))
+      .filter(Boolean);
+  }
+
+  function cleanSentence(text) {
+    if (!text) return "";
+    return String(text).replace(/\s+/g, " ").trim();
+  }
+
+  function startsWithDigit(text) {
+    return /^\s*[0-9]/.test(text || "");
+  }
+
+  function wrapPedagogicalLead(sentence) {
+    const clean = cleanSentence(sentence);
+    if (!clean) return "";
+    return `Lecture de classe : ${clean}`;
+  }
+
+  function registerSentencesAsIdeas(text, registry) {
+    splitSentences(text).forEach((sentence) => registerIdea(sentence, registry));
+  }
+
+  function registerIdea(text, registry) {
+    const norm = normalizeIdeaText(text);
+    if (!norm) return false;
+    if (registry.has(norm)) return false;
+    registry.add(norm);
+    return true;
+  }
+
+  function normalizeIdeaText(text) {
+    if (!text) return "";
+    return String(text)
+      .toLowerCase()
+      .replace(/[0-9]+([.,][0-9]+)?/g, " num ")
+      .replace(/[%]/g, " pourcent ")
+      .replace(/[^a-zàâçéèêëîïôùûüÿñæœ\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
   function renderFallbackError(message) {
